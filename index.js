@@ -19,7 +19,7 @@ const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        //GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildVoiceStates
     ]
 });
@@ -41,10 +41,14 @@ try {
 function cleanYoutubeUrl(url) {
     try {
         const u = new URL(url);
+        // VALIDACIÓN: Solo permitir dominios oficiales de confianza
+        const dominiosSeguros = ['youtube.com', 'youtu.be', 'music.youtube.com', 'googleusercontent.com'];
+        if (!dominiosSeguros.some(d => u.hostname.endsWith(d))) return null;
+
         const videoId = u.searchParams.get('v') || u.pathname.split('/').pop();
-        return `https://www.youtube.com/watch?v=${videoId}`;
+        return videoId ? `https://www.youtube.com/watch?v=${videoId}` : null;
     } catch(e) {
-        return url;
+        return null;
     }
 }
 
@@ -145,6 +149,7 @@ class YoutubeExtExtractor extends BaseExtractor {
     async stream(track) {
         try {
             const cleanUrl = cleanYoutubeUrl(track.url);
+            if (!cleanUrl) throw new Error("URL No permitida o malformada");
             console.log('[YoutubeExt] Obteniendo stream para:', cleanUrl);
 
             const audioUrl = (await youtubedl(cleanUrl, {
@@ -202,24 +207,38 @@ async function inicializarMusica() {
 
 inicializarMusica();
 
-player.events.on('playerStart', (queue, track) => {
+// --- EVENTOS DE MÚSICA REFORZADOS EN index.js ---
+
+player.events.on('playerStart', async (queue, track) => {
     const embed = new EmbedBuilder()
         .setTitle('🎵 Reproduciendo Ahora')
-        .setDescription(`**[${track.title}](${track.url})**\nAutor: ${track.author} | Duración: ${track.duration}`)
+        .setDescription(`**[${track.title}](${track.url})**\nAutor: ${track.author}`)
         .setThumbnail(track.thumbnail)
-        .setColor('#FF9900')
-        .setFooter({ text: 'Sintonizando audio de alta fidelidad 🔨' });
+        .setColor('#FF9900');
 
     const fila = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('musica_pausa').setEmoji('⏯️').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('musica_salto').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('musica_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('musica_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('musica_queue').setEmoji('📜').setStyle(ButtonStyle.Secondary)
     );
 
     if (queue.metadata?.canal) {
-        queue.metadata.canal.send({ embeds: [embed], components: [fila] }).catch(() => null);
+        // Guardamos el mensaje en la metadata para validación de sesión
+        const mensaje = await queue.metadata.canal.send({ embeds: [embed], components: [fila] }).catch(() => null);
+        queue.metadata.ultimoMensaje = mensaje;
     }
 });
+
+const limpiarInterfaz = async (queue) => {
+    if (queue.metadata?.ultimoMensaje) {
+        await queue.metadata.ultimoMensaje.edit({ components: [] }).catch(() => null);
+        queue.metadata.ultimoMensaje = null;
+    }
+};
+
+player.events.on('emptyQueue', (queue) => limpiarInterfaz(queue));
+player.events.on('disconnect', (queue) => limpiarInterfaz(queue));
 
 player.events.on('error', (queue, error) => {
     console.error(`[Error de Sistema]: ${error.message}`);
@@ -228,7 +247,7 @@ player.events.on('error', (queue, error) => {
             categoria: 'sistema',
             titulo: 'Error de Sistema',
             descripcion: 'Ocurrió un error en el sistema de reproducción.',
-            error: error.message,
+            error: sanitizeErrorMessage(error.message),
         }).catch(() => null);
     }
 });
@@ -243,7 +262,7 @@ player.events.on('playerError', (queue, error) => {
             campos: queue.currentTrack ? [
                 { name: '🎵 Pista', value: queue.currentTrack.title, inline: true }
             ] : [],
-            error: error.message,
+            error: sanitizeErrorMessage(error.message),
         }).catch(() => null);
     }
 });
@@ -261,65 +280,158 @@ client.once("clientReady", () => {
 });
 
 client.on("interactionCreate", async (interaction) => {
+    // 1. MANEJO DE COMANDOS DE BARRA (SLASH COMMANDS)
     if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
         if (!command) return;
 
+        // Lógica de Cooldowns reforzada
         const { cooldowns } = client;
         if (!cooldowns.has(command.data.name)) cooldowns.set(command.data.name, new Collection());
+        
         const now = Date.now();
         const timestamps = cooldowns.get(command.data.name);
         const cooldownAmount = (command.cooldown ?? 3) * 1000;
 
         if (timestamps.has(interaction.user.id)) {
             const expirationTime = timestamps.get(interaction.user.id) + cooldownAmount;
+            
             if (now < expirationTime) {
+                // BUFFER DE SEGURIDAD: Añadimos 2 segundos para evitar el bug de "hace un minuto"
+                const tiempoVisual = Math.round((expirationTime + 2000) / 1000);
                 return interaction.reply({
-                    content: `⏳ Espera <t:${Math.round(expirationTime / 1000)}:R> para usar \`/${command.data.name}\`.`,
+                    content: `⏳ Vita está recargando Graf Eisen. Espera <t:${tiempoVisual}:R> para usar \`/${command.data.name}\`.`,
                     flags: MessageFlags.Ephemeral
                 });
             }
         }
+
         timestamps.set(interaction.user.id, now);
         setTimeout(() => timestamps.delete(interaction.user.id), cooldownAmount);
 
         try {
-                await command.execute(interaction);
-            } catch (error) {
-                console.error(error);
-                await log(interaction.guild, {
-                    categoria: 'sistema',
-                    titulo: 'Error en comando',
-                    descripcion: `Ocurrió un error al ejecutar el comando \`/${interaction.commandName}\`.`,
-                    usuario: interaction.user,
-                    error: error.message,
-                }).catch(() => null);
-        
-                const msg = { content: 'Hubo un error al ejecutar este comando.', flags: MessageFlags.Ephemeral };
-                if (interaction.replied || interaction.deferred) await interaction.followUp(msg);
-                else await interaction.reply(msg);
-            }
+            await command.execute(interaction);
+        } catch (error) {
+            console.error('[Error de Ejecución]:', error);
 
+            // LOG SANITIZADO: Protegemos las rutas del servidor
+            const { log, sanitizeErrorMessage } = require('./utils/logger');
+            await log(interaction.guild, {
+                categoria: 'sistema',
+                titulo: 'Error en comando',
+                descripcion: `Falló el comando \`/${interaction.commandName}\`.`,
+                usuario: interaction.user,
+                error: sanitizeErrorMessage(error.message),
+            }).catch(() => null);
+
+            const msgError = { 
+                content: '❌ Mis circuitos mágicos han fallado al ejecutar este comando.', 
+                flags: MessageFlags.Ephemeral 
+            };
+
+            if (interaction.replied || interaction.deferred) await interaction.followUp(msgError);
+            else await interaction.reply(msgError);
+        }
+
+    // 2. MANEJO DE BOTONES (MÚSICA Y JUEGOS)
     } else if (interaction.isButton()) {
-        const queue = player.nodes.get(interaction.guildId);
-        if (!queue) return interaction.reply({ content: '❌ No hay música activa.', flags: MessageFlags.Ephemeral });
+        // FILTRO DE SEGURIDAD: Solo procesamos botones con el prefijo "musica_"
+        // Esto evita que index.js intente procesar botones de PPT o Auditoría
+        if (!interaction.customId.startsWith('musica_')) return;
 
-        if (interaction.customId === 'musica_pausa') {
-            queue.node.setPaused(!queue.node.isPaused());
+        const queue = player.nodes.get(interaction.guildId);
+        
+        // Si no hay cola, el botón es huérfano (zombi)
+        if (!queue) return interaction.reply({ 
+            content: '❌ No hay música activa en este momento.', 
+            flags: MessageFlags.Ephemeral 
+        });
+
+        // VALIDACIÓN DE SESIÓN: Comparamos el ID del mensaje con el último enviado
+        // Esto soluciona que botones de sesiones viejas detengan la música nueva
+        if (queue.metadata?.ultimoMensaje && interaction.message.id !== queue.metadata.ultimoMensaje.id) {
             return interaction.reply({
-                content: queue.node.isPaused() ? '⏸️ Pausado.' : '▶️ Reanudado.',
+                content: '⚠️ Este panel de control es de una canción antigua. Usa el mensaje más reciente.',
                 flags: MessageFlags.Ephemeral
             });
         }
-        if (interaction.customId === 'musica_salto') {
-            queue.node.skip();
-            return interaction.reply({ content: '⏭️ Saltando canción.', flags: MessageFlags.Ephemeral });
-        }
-        if (interaction.customId === 'musica_stop') {
-            queue.delete();
-            return interaction.reply({ content: '🛑 Detenido.', flags: MessageFlags.Ephemeral });
+
+        // Acciones de los botones de música
+        try {
+            // Pausar/Reanudar música
+            if (interaction.customId === 'musica_pausa') {
+                queue.node.setPaused(!queue.node.isPaused());
+                return interaction.reply({
+                    content: queue.node.isPaused() ? '⏸️ Música pausada.' : '▶️ Música reanudada.',
+                    flags: MessageFlags.Ephemeral
+                });
+            }
+
+            // Saltar a la siguiente pista
+            if (interaction.customId === 'musica_salto') {
+                queue.node.skip();
+                return interaction.reply({ content: '⏭️ Saltando a la siguiente pista.', flags: MessageFlags.Ephemeral });
+            }
+
+            // Detener música y limpiar cola
+            if (interaction.customId === 'musica_stop') {
+                // Limpiamos los botones físicamente antes de borrar la cola
+                if (queue.metadata?.ultimoMensaje) {
+                    await queue.metadata.ultimoMensaje.edit({ components: [] }).catch(() => null);
+                }
+                queue.delete();
+                return interaction.reply({ content: '🛑 Sesión finalizada.', flags: MessageFlags.Ephemeral });
+            }
+
+            // Mostrar cola de reproducción
+            if (interaction.customId === 'musica_queue') {
+                const currentTrack = queue.currentTrack;
+                const tracks = queue.tracks.toArray(); 
+                const nextSongs = tracks.slice(0, 10); // Tomamos las primeras 10
+
+                const listado = nextSongs.map((track, i) => {
+                    return `**${i + 1}.** [${track.title}](${track.url}) - \`${track.duration}\``;
+                }).join('\n');
+
+                const queueEmbed = new EmbedBuilder()
+                    .setTitle(`🎼 Cola de Reproducción - ${interaction.guild.name}`)
+                    .setColor('#FF9900')
+                    .setThumbnail(currentTrack.thumbnail)
+                    .addFields(
+                        { 
+                            name: '▶️ Reproduciendo Ahora', 
+                            value: `**[${currentTrack.title}](${currentTrack.url})**\nAutor: \`${currentTrack.author}\``, 
+                            inline: false 
+                        },
+                        { 
+                            name: '⏭️ Próximas Canciones', 
+                            value: listado || '_No hay más canciones en la cola._', 
+                            inline: false 
+                        }
+                    )
+                    .setFooter({ 
+                        text: `Total de canciones: ${tracks.length} | Tiempo total: ${queue.durationFormatted} 🔨` 
+                    })
+                    .setTimestamp();
+
+                // 2. Respondemos de forma efímera para no saturar el chat
+                return interaction.reply({ embeds: [queueEmbed], flags: MessageFlags.Ephemeral });
+            }
+
+        } catch (e) {
+            console.error('[Button Error]:', e.message);
         }
     }
 });
 
 client.login(process.env.TOKEN);
+
+// Manejo global de errores para evitar que el proceso muera
+process.on('unhandledRejection', (reason, promise) => {
+    console.error(' [Anti-Crash] Rechazo no manejado:', reason);
+    // Aquí podrías llamar a log() si tienes acceso al guild
+});
+
+process.on('uncaughtException', (err, origin) => {
+    console.error(' [Anti-Crash] Excepción no capturada:', err);
+});

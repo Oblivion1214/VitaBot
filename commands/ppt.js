@@ -25,6 +25,7 @@ module.exports = {
         const collector = respuesta.createMessageComponentCollector({ time: 30000 });
 
         collector.on('collect', async i => {
+            // Verificación de usuario
             if (i.user.id !== interaction.user.id) {
                 return i.reply({ 
                     content: '❌ ¡Esta no es tu partida! Usa `/ppt` para iniciar la tuya.', 
@@ -75,13 +76,19 @@ module.exports = {
                 )
                 .setColor(color);
 
+            // Desactivamos los botones ANTES de responder para evitar doble clic
             btnPiedra.setDisabled(true);
             btnPapel.setDisabled(true);
             btnTijera.setDisabled(true);
             const filaDesactivada = new ActionRowBuilder().addComponents(btnPiedra, btnPapel, btnTijera);
 
-            await i.update({ embeds: [embedFinal], components: [filaDesactivada] });
-            collector.stop();
+            try {
+                // Usamos update para que los botones se vean desactivados inmediatamente
+                await i.update({ embeds: [embedFinal], components: [filaDesactivada] });
+                collector.stop(); // Terminamos el colector manualmente
+            } catch (err) {
+                console.error('Error al actualizar PPT:', err.message);
+            }
         });
 
         collector.on('end', collected => {

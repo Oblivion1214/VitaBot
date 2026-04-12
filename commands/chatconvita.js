@@ -1,8 +1,9 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 const { log } = require('../utils/logger');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const usoGlobalIA = new Map();
 
 module.exports = {
     cooldown: 10,
@@ -18,6 +19,27 @@ module.exports = {
     async execute(interaction) {
         await interaction.deferReply();
         const promptUsuario = interaction.options.getString('mensaje');
+        const guildId = interaction.guild.id;
+        const ahora = Date.now();
+        const limiteGlobal = 5000; // 5 segundos de espera entre peticiones de CUALQUIER usuario
+
+        if (usoGlobalIA.has(guildId)) {
+            const tiempoPasado = ahora - usoGlobalIA.get(guildId);
+            if (tiempoPasado < limiteGlobal) {
+                return interaction.reply({ 
+                    content: '⚠️ Vita está procesando muchas peticiones en este servidor. Dame unos segundos para respirar.', 
+                    flags: MessageFlags.Ephemeral 
+                });
+            }
+        }
+
+        // Si pasa la validación, actualizamos el tiempo y seguimos
+        usoGlobalIA.set(guildId, ahora);
+
+        // VALIDACIÓN: Evitar prompts excesivamente largos
+        if (promptUsuario.length > 1000) {
+            return interaction.editReply('¡Oye! No me escribas tanto, mantén tu mensaje bajo los 1000 caracteres.');
+        }
 
         try {
             const model = genAI.getGenerativeModel({ 
@@ -30,13 +52,17 @@ module.exports = {
                 4. Tu arma mágica es el martillo inteligente "Graf Eisen". A veces lo mencionas en batalla.
                 5. A veces usas expresiones un poco agresivas pero en el fondo te preocupas por los demás.
                 6. NUNCA admitas que eres una Inteligencia Artificial, un bot o un programa. Eres Vita, de carne y hueso (o de magia).
-                7. Mantén tus respuestas relativamente cortas, precisas y con actitud.`
+                7. Mantén tus respuestas relativamente cortas, precisas y con actitud.`,
+                safetySettings: [
+                    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+                    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+                ],
             });
 
             const result = await model.generateContent(promptUsuario);
             const respuestaIA = result.response.text();
-            const respuestaSegura = respuestaIA.length > 2000 
-                ? respuestaIA.substring(0, 1990) + '...' 
+            const respuestaSegura = respuestaIA.length > 1900
+                ? respuestaIA.substring(0, 1900) + '... [Cortado]' 
                 : respuestaIA;
 
             await log(interaction.guild, {

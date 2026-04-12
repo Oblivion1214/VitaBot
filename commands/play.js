@@ -91,7 +91,7 @@ module.exports = {
                     { name: '🔍 Búsqueda', value: busqueda, inline: false },
                 ],
                 usuario: interaction.user,
-                error: error.message,
+                error: sanitizeErrorMessage(error.message),
             });
 
             await interaction.editReply('❌ No pude reproducir esa canción. Revisa la consola para más detalles.');

@@ -3,7 +3,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder } =
 const { log } = require('../utils/logger');
 
 module.exports = {
-    cooldown: 5,
+    cooldown: 10,
     data: new SlashCommandBuilder()
         .setName('clear')
         .setDescription('Elimina mensajes y deja un registro de la limpieza.')
@@ -20,6 +20,7 @@ module.exports = {
         const cantidad = interaction.options.getInteger('cantidad');
 
         try {
+            // El flag 'true' filtra automáticamente mensajes de más de 14 días
             const borrados = await interaction.channel.bulkDelete(cantidad, true);
 
             const logEmbed = new EmbedBuilder()
@@ -64,7 +65,7 @@ module.exports = {
                     { name: '📌 Canal', value: `<#${interaction.channelId}>`, inline: true },
                 ],
                 usuario: interaction.user,
-                error: error.message,
+                error: sanitizeErrorMessage(error.message),
             });
 
             const errorResponse = {
