@@ -1,0 +1,19 @@
+# Variables de entorno — NUNCA subir esto
+.env
+.env.local
+
+# Cookies de YouTube — contienen sesión de tu cuenta
+youtube-cookie.json
+
+# Configuración de auditoría — datos del servidor
+audit-config.json
+
+# Dependencias — se reinstalan con npm install
+node_modules/
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

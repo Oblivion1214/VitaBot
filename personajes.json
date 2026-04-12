@@ -1,0 +1,13 @@
+[
+  { "nombre": "Shiroko Terror", "franquicia": "Blue Archive", "rareza": "Legendario", "estrellas": "⭐⭐⭐⭐⭐", "color": "#FFD700", "imagen": "https://i.imgur.com/vHqB5J0.png" },
+  { "nombre": "Ellen Joe", "franquicia": "Zenless Zone Zero", "rareza": "Legendario", "estrellas": "⭐⭐⭐⭐⭐", "color": "#FFD700", "imagen": "https://i.imgur.com/R38M50R.png" },
+  { "nombre": "Reimu Hakurei", "franquicia": "Touhou Project", "rareza": "Legendario", "estrellas": "⭐⭐⭐⭐⭐", "color": "#FFD700", "imagen": "https://i.imgur.com/G3Z1VbZ.png" },
+  
+  { "nombre": "Aru Rikuhachima", "franquicia": "Blue Archive", "rareza": "Raro", "estrellas": "⭐⭐⭐⭐", "color": "#A020F0", "imagen": "https://i.imgur.com/L1M4D3D.png" },
+  { "nombre": "Anby Demara", "franquicia": "Zenless Zone Zero", "rareza": "Raro", "estrellas": "⭐⭐⭐⭐", "color": "#A020F0", "imagen": "https://i.imgur.com/W2S1M9H.png" },
+  { "nombre": "Marisa Kirisame", "franquicia": "Touhou Project", "rareza": "Raro", "estrellas": "⭐⭐⭐⭐", "color": "#A020F0", "imagen": "https://i.imgur.com/Q9R4W1F.png" },
+  
+  { "nombre": "Yuuka Hayase", "franquicia": "Blue Archive", "rareza": "Común", "estrellas": "⭐⭐⭐", "color": "#00BFFF", "imagen": "https://i.imgur.com/P5T9N6B.png" },
+  { "nombre": "Billy Kid", "franquicia": "Zenless Zone Zero", "rareza": "Común", "estrellas": "⭐⭐⭐", "color": "#00BFFF", "imagen": "https://i.imgur.com/N7L1B3M.png" },
+  { "nombre": "Cirno", "franquicia": "Touhou Project", "rareza": "Común", "estrellas": "⭐⭐⭐", "color": "#00BFFF", "imagen": "https://i.imgur.com/X4Z1K8L.png" }
+]
