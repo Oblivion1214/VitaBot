@@ -8,12 +8,13 @@ const {
 } = require("discord.js");
 const { Player, BaseExtractor, Track, QueryType } = require('discord-player');
 const { StreamType } = require('@discordjs/voice');
+const { DefaultExtractors } = require('@discord-player/extractor');
 const fs = require("fs");
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const youtubeExt = require('youtube-ext');
 const youtubedl = require('youtube-dl-exec');
-const { log } = require('./utils/logger');
+const { log, sanitizeErrorMessage } = require('./utils/logger');
 
 const client = new Client({
     intents: [
@@ -23,6 +24,13 @@ const client = new Client({
         GatewayIntentBits.GuildVoiceStates
     ]
 });
+
+// Nueva integración de letras
+const Genius = require("genius-lyrics");
+const geniusClient = new Genius.Client(process.env.GENIUS_TOKEN);
+// Lo guardamos en el objeto 'client' para que sea accesible desde cualquier comando
+client.genius = geniusClient;
+console.log('» | Motor de letras (Genius SDK) sincronizado.');
 
 client.commands = new Collection();
 client.cooldowns = new Collection();
@@ -59,10 +67,49 @@ function secondsToTime(secs) {
     return `${m}:${r.toString().padStart(2, '0')}`;
 }
 
+// Función de limpieza avanzada
+function limpiarParaLyrics(texto, autor) {
+    if (!texto) return '';
+    
+    let limpio = texto
+        // Eliminamos tags específicos que vimos en tus logs
+        .replace(/\(Letra Oficial\)/gi, '')
+        .replace(/\(Letra\)/gi, '')
+        .replace(/\(Letra Lyrics\)/gi, '')
+        .replace(/\(Video Oficial\)/gi, '')
+        .replace(/\(Official Video\)/gi, '')
+        .replace(/\(Lyrics\)/gi, '')
+        .replace(/\(Audio Oficial\)/gi, '')
+        .replace(/\(Lyrics Video\)/gi, '')
+        .replace(/\(Cover Audio\)/gi, '')
+        .replace(/\[.*?\]/g, '') 
+        .replace(/"/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (limpio.includes('-')) {
+        const partes = limpio.split('-');
+        if (autor && partes[0].toLowerCase().includes(autor.toLowerCase())) {
+            limpio = partes[1].trim();
+        } else {
+            limpio = partes[partes.length - 1].trim();
+        }
+    }
+    
+    return limpio;
+}
+
 class YoutubeExtExtractor extends BaseExtractor {
     static identifier = 'com.vitabot.youtube-ext';
 
     async validate(query, type) {
+        // Solo manejamos YouTube, Spotify y búsquedas de texto
+        if (query.startsWith('http') && 
+            !query.includes('youtube.com') && 
+            !query.includes('youtu.be') && 
+            !query.includes('spotify.com')) {
+            return false; 
+        }
         return true;
     }
 
@@ -70,19 +117,15 @@ class YoutubeExtExtractor extends BaseExtractor {
         try {
             // --- SOPORTE SPOTIFY ---
             if (query.includes('spotify.com/track/')) {
-                console.log('[Spotify] Detectado link de Spotify');
-
                 const trackId = query.match(/track\/([a-zA-Z0-9]+)/)?.[1];
-                if (!trackId) return this.createResponse(null, []);
+                if (!trackId) return { playlist: null, tracks: [] };
 
                 const oembedRes = await fetch(`https://open.spotify.com/oembed?url=spotify:track:${trackId}`);
                 const oembed = await oembedRes.json();
                 const searchQuery = oembed.title;
 
-                console.log('[Spotify] Título obtenido:', searchQuery);
-
                 const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 1 });
-                if (!results?.videos?.length) return this.createResponse(null, []);
+                if (!results?.videos?.length) return { playlist: null, tracks: [] };
 
                 const videoUrl = cleanYoutubeUrl(results.videos[0].url);
                 const video = results.videos[0];
@@ -102,7 +145,6 @@ class YoutubeExtExtractor extends BaseExtractor {
                 });
 
                 track.extractor = this;
-                console.log('[Spotify] Track encontrado en YouTube:', track.title);
                 return { playlist: null, tracks: [track] };
             }
 
@@ -113,7 +155,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 videoUrl = cleanYoutubeUrl(query);
             } else {
                 const results = await youtubeExt.search(query, { type: 'video', limit: 1 });
-                if (!results?.videos?.length) return this.createResponse(null, []);
+                if (!results?.videos?.length) return { playlist: null, tracks: [] };
                 videoUrl = cleanYoutubeUrl(results.videos[0].url);
             }
 
@@ -121,7 +163,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 requestOptions: { headers: { cookie: youtubeCookie } }
             });
 
-            if (!info?.title) return this.createResponse(null, []);
+            if (!info?.title) return { playlist: null, tracks: [] };
 
             const track = new Track(this.context.player, {
                 title: info.title || 'Sin título',
@@ -141,8 +183,16 @@ class YoutubeExtExtractor extends BaseExtractor {
             return { playlist: null, tracks: [track] };
 
         } catch(e) {
-            console.error('[YoutubeExt handle] ERROR:', e.message);
-            return this.createResponse(null, []);
+            // CORRECCIÓN: Si hay error de parseo (SyntaxError), retornamos vacío para que 
+            // discord-player intente con el siguiente extractor en la cadena.
+            if (e.message.includes('Unexpected non-whitespace character') || e instanceof SyntaxError) {
+                console.warn('[YoutubeExt] Error de parseo en YouTube. Activando motores de respaldo...');
+            } else {
+                console.error('[YoutubeExt handle] ERROR:', e.message);
+            }
+            
+            // Importante: Retornar este objeto permite que la búsqueda continúe con otros extractores
+            return { playlist: null, tracks: [] };
         }
     }
 
@@ -150,7 +200,6 @@ class YoutubeExtExtractor extends BaseExtractor {
         try {
             const cleanUrl = cleanYoutubeUrl(track.url);
             if (!cleanUrl) throw new Error("URL No permitida o malformada");
-            console.log('[YoutubeExt] Obteniendo stream para:', cleanUrl);
 
             const audioUrl = (await youtubedl(cleanUrl, {
                 format: 'bestaudio',
@@ -159,14 +208,13 @@ class YoutubeExtExtractor extends BaseExtractor {
                 noWarnings: true,
             })).trim();
 
-            console.log('[YoutubeExt] URL obtenida:', !!audioUrl);
-
             const ffmpegProcess = spawn(ffmpegPath, [
                 '-reconnect', '1',
+                '-reconnect_at_eof', '1',
                 '-reconnect_streamed', '1',
-                '-reconnect_delay_max', '5',
-                '-probesize', '15M',         // 15 Megabytes (Suficiente para headers Opus pesados)
-                '-analyzeduration', '15M',   // 15 Segundos (15,000,000 microsegundos)
+                '-reconnect_delay_max', '10',
+                '-probesize', '2M',
+                '-analyzeduration', '2M',
                 '-loglevel', 'error',
                 '-i', audioUrl,
                 '-vn',
@@ -177,9 +225,6 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-f', 'opus',
                 'pipe:1'
             ], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-            ffmpegProcess.stderr.on('data', d => console.error('[FFmpeg]', d.toString()));
-            ffmpegProcess.on('error', e => console.error('[FFmpeg error]', e.message));
 
             return { stream: ffmpegProcess.stdout, type: StreamType.Opus };
 
@@ -196,10 +241,17 @@ class YoutubeExtExtractor extends BaseExtractor {
 
 const player = new Player(client);
 
+// Actualiza la función inicializarMusica
 async function inicializarMusica() {
     try {
+        // CARGA CRÍTICA: Permite al bot manejar múltiples tipos de audio
+        // 1. REGISTRA EL TUYO PRIMERO: Para que tenga prioridad absoluta en búsquedas
         await player.extractors.register(YoutubeExtExtractor, {});
-        console.log('» | Extractor youtube-ext registrado y listo.');
+        
+        // 2. CARGA LOS BASE: Solo para soportar el audio de Google y otros formatos
+        await player.extractors.loadMulti(DefaultExtractors);
+
+        console.log('» | Motores de audio (Base + Custom) cargados correctamente.');
     } catch (e) {
         console.error('» | Error al inicializar motores:', e.message);
     }
@@ -210,22 +262,43 @@ inicializarMusica();
 // --- EVENTOS DE MÚSICA REFORZADOS EN index.js ---
 
 player.events.on('playerStart', async (queue, track) => {
+    // 1. FILTRO: Si la pista no tiene título real (como el TTS), no enviamos panel
+    if (track.url.includes('translate_tts')) return;
+
     const embed = new EmbedBuilder()
         .setTitle('🎵 Reproduciendo Ahora')
         .setDescription(`**[${track.title}](${track.url})**\nAutor: ${track.author}`)
         .setThumbnail(track.thumbnail)
         .setColor('#FF9900');
 
-    const fila = new ActionRowBuilder().addComponents(
+        if (track.thumbnail && track.thumbnail.startsWith('http')) {
+        embed.setThumbnail(track.thumbnail);
+    }
+
+    // PRIMERA FILA: Controles básicos
+    const fila1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('musica_pausa').setEmoji('⏯️').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('musica_salto').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('musica_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('musica_shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('musica_queue').setEmoji('📜').setStyle(ButtonStyle.Secondary)
     );
 
+    // SEGUNDA FILA: Utilidades adicionales
+    const fila2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId('musica_lyrics')
+            .setLabel('Ver Letras')
+            .setEmoji('🎤')
+            .setStyle(ButtonStyle.Secondary)
+    );
+
     if (queue.metadata?.canal) {
-        // Guardamos el mensaje en la metadata para validación de sesión
-        const mensaje = await queue.metadata.canal.send({ embeds: [embed], components: [fila] }).catch(() => null);
+        // Enviamos ambas filas de botones
+        const mensaje = await queue.metadata.canal.send({ 
+            embeds: [embed], 
+            components: [fila1, fila2] 
+        }).catch(() => null);
         queue.metadata.ultimoMensaje = mensaje;
     }
 });
@@ -383,6 +456,25 @@ client.on("interactionCreate", async (interaction) => {
                 return interaction.reply({ content: '🛑 Sesión finalizada.', flags: MessageFlags.Ephemeral });
             }
 
+            // Mezclar la cola de reproducción
+            if (interaction.customId === 'musica_shuffle') {
+                // Verificamos si hay suficientes canciones para mezclar
+                if (queue.tracks.size < 2) {
+                    return interaction.reply({ 
+                        content: '⚠️ No hay suficientes canciones en la cola para mezclar.', 
+                        flags: MessageFlags.Ephemeral 
+                    });
+                }
+
+                // Mezclamos la cola usando el método interno de discord-player
+                queue.tracks.shuffle();
+
+                return interaction.reply({ 
+                    content: '🔀 **Modo aleatorio:** La cola de reproducción ha sido mezclada con éxito.', 
+                    flags: MessageFlags.Ephemeral 
+                });
+            }
+
             // Mostrar cola de reproducción
             if (interaction.customId === 'musica_queue') {
                 const currentTrack = queue.currentTrack;
@@ -416,6 +508,41 @@ client.on("interactionCreate", async (interaction) => {
 
                 // 2. Respondemos de forma efímera para no saturar el chat
                 return interaction.reply({ embeds: [queueEmbed], flags: MessageFlags.Ephemeral });
+            }
+
+            // Mostrar letras de la canción actual
+            if (interaction.customId === 'musica_lyrics') {
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+                try {
+                    const currentTrack = queue.currentTrack;
+                    const tituloLimpio = limpiarParaLyrics(currentTrack.title, currentTrack.author);
+
+                    // Búsqueda directa en Genius
+                    console.log(`[Genius] Buscando: ${tituloLimpio} - ${currentTrack.author}`);
+                    const searches = await client.genius.songs.search(`${tituloLimpio} ${currentTrack.author}`);
+                    
+                    const firstSong = searches[0];
+                    if (!firstSong) {
+                        return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
+                    }
+
+                    const lyrics = await firstSong.lyrics();
+
+                    const lyricsEmbed = new EmbedBuilder()
+                        .setTitle(`🎤 Letras: ${firstSong.title}`)
+                        .setAuthor({ name: firstSong.artist.name })
+                        .setThumbnail(currentTrack.thumbnail)
+                        .setDescription(lyrics.length > 4096 ? lyrics.substring(0, 4090) + '...' : lyrics)
+                        .setColor('#FF9900')
+                        .setFooter({ text: 'Powered by Genius API & VitaBot 🔨' });
+
+                    return interaction.editReply({ embeds: [lyricsEmbed] });
+
+                } catch (e) {
+                    console.error('[Genius Error]:', e.message);
+                    return interaction.editReply('❌ No se pudo obtener la letra en este momento.');
+                }
             }
 
         } catch (e) {

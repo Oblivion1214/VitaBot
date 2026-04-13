@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { useMainPlayer } = require('discord-player');
 const { log } = require('../utils/logger');
+const decirCmd = require('./decir.js');
 
 module.exports = {
     cooldown: 5,
@@ -17,6 +18,15 @@ module.exports = {
     async execute(interaction) {
         const player = useMainPlayer();
         const canalVoz = interaction.member.voice.channel;
+
+        // BLOQUEO 2: Solo bloqueamos si está HABLANDO (enEjecucion), no si está ocioso
+        if (decirCmd.enEjecucion.has(interaction.guildId)) {
+            console.log(`[play Block] Música rechazada: Vita está procesando TTS en ${interaction.guildId}`);
+            return interaction.reply({
+                content: '⏳ **Vita está hablando:** Espera a que termine su frase para pedir música.',
+                flags: MessageFlags.Ephemeral
+            });
+        }
 
         if (!canalVoz) {
             return interaction.reply({
@@ -36,6 +46,14 @@ module.exports = {
 
         await interaction.deferReply();
         const busqueda = interaction.options.getString('cancion');
+
+        if (decirCmd.conexionesTTS.has(interaction.guildId)) {
+            const tts = decirCmd.conexionesTTS.get(interaction.guildId);
+            clearTimeout(tts.timeout);
+            tts.connection.destroy(); // Matamos la conexión ociosa para entrar limpios
+            decirCmd.conexionesTTS.delete(interaction.guildId);
+            console.log('[play] Conexión TTS ociosa eliminada. Iniciando música...');
+        }
 
         const resultado = await player.search(busqueda, { requestedBy: interaction.user });
         console.log('[play] Resultado búsqueda:', resultado?.tracks?.length, 'tracks');
