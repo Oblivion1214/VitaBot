@@ -17,3 +17,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Archivos de prueba y desarrollo
+check.js
