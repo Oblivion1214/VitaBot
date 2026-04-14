@@ -1,0 +1,32 @@
+//Iniciar el bot
+pm2 start index.js --name vitabot
+
+//Arranque automatico
+pm2-startup install
+
+//Guardar el estado automatico
+pm2 save
+
+//Revisar el estado del bot
+pm2 status o pm2 list
+
+//Ver los ultimos 10 logs del bot
+pm2 logs vitabot
+
+//Limpiar la memoria de guardado
+pm2 cleardump
+
+//Reiniciar al bot para aplicar cambios
+pm2 restart vitabot
+
+//Apagar el bot para mantenimiento mas pesado como agregar nuevos deploys o actualizar paquetes
+pm2 stop vitabot
+
+//Detener el proceso de auto-arranque (RECORDAR DAR pm2 save)
+pm2 delete vitabot
+
+//Ver si el servicio de Windows está activo
+Get-Service pm2 (en PowerShell)
+
+//Borra por completo el boot para PM2
+pm2-startup uninstall

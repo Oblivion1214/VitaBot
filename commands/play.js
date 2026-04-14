@@ -1,7 +1,7 @@
 // commands/play.js
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { useMainPlayer } = require('discord-player');
-const { log } = require('../utils/logger');
+const { log, sanitizeErrorMessage } = require('../utils/logger');
 const decirCmd = require('./decir.js');
 
 module.exports = {
@@ -79,7 +79,7 @@ module.exports = {
                     leaveOnEmpty: true,
                     leaveOnEmptyCooldown: 5000,
                     leaveOnEnd: false,
-                    volume: 80,
+                    volume: 100,
                     selfDeaf: true
                 }
             });

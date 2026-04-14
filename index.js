@@ -14,7 +14,8 @@ const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const youtubeExt = require('youtube-ext');
 const youtubedl = require('youtube-dl-exec');
-const { log, sanitizeErrorMessage } = require('./utils/logger');
+const { log, sanitizeErrorMessage, obtenerConfigServidor, actualizarConfigServidor, obtenerCanalLog } = require('./utils/logger');
+
 
 const client = new Client({
     intents: [
@@ -31,6 +32,23 @@ const geniusClient = new Genius.Client(process.env.GENIUS_TOKEN);
 // Lo guardamos en el objeto 'client' para que sea accesible desde cualquier comando
 client.genius = geniusClient;
 console.log('» | Motor de letras (Genius SDK) sincronizado.');
+
+const i18n = {
+    es: {
+        welcome_title: "✨ Vita Graf Eisen: Conectada",
+        welcome_desc: "¡Hola! Soy un sistema multifunción enfocado en la **alta fidelidad de audio** y auditoría.",
+        kbps_advice: "💡 **Tip de Admin:** Para audio Hi-Fi, sube el bitrate del los canales de voz a 96kbps o superior, siempre y cuando el server tenga Boost.",
+        setup_button: "Configurar Auditoría",
+        lang_button: "Change to English 🇺🇸"
+    },
+    en: {
+        welcome_title: "✨ Vita Graf Eisen: Connected",
+        welcome_desc: "Hello! I am a multi-function system focused on **High-Fidelity audio** and auditing.",
+        kbps_advice: "💡 **Admin Tip:** For Hi-Fi audio, set the bitrate of voice channels to 96kbps or higher, always and when the server has Boost.",
+        setup_button: "Setup Audit Logs",
+        lang_button: "Cambiar a Español 🇲🇽"
+    }
+};
 
 client.commands = new Collection();
 client.cooldowns = new Collection();
@@ -221,7 +239,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-c:a', 'libopus',
                 '-ar', '48000',
                 '-ac', '2',
-                '-b:a', '128k',
+                '-b:a', '320k',
                 '-f', 'opus',
                 'pipe:1'
             ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -549,6 +567,111 @@ client.on("interactionCreate", async (interaction) => {
             console.error('[Button Error]:', e.message);
         }
     }
+});
+
+// Implementación de Fase 1 (Bienvenida y Verificación)
+// index.js — Implementación Final de guildCreate con Memoria JSON
+
+client.on("guildCreate", async (guild) => {
+    console.log(`» | Vita detectada en: ${guild.name}. Iniciando protocolo de bienvenida.`);
+
+    // 1. CARGA DE CONFIGURACIÓN E IDIOMA (Persistencia)
+    // Detectamos el idioma sugerido por Discord si el server no tiene registro previo
+    const sugerenciaLang = guild.preferredLocale === 'es-ES' ? 'es' : 'en';
+    // Obtenemos o creamos la config en audit-config.json
+    let config = obtenerConfigServidor(guild.id, sugerenciaLang); 
+    let currentLang = config.idioma || sugerenciaLang;
+
+    // 2. OBTENCIÓN DEL CANAL (Usa tu lógica de vitabot-logs)
+    const auditChannel = await obtenerCanalLog(guild);
+
+    // 3. CONSTRUCCIÓN DE LA INTERFAZ (Embed + Botones)
+    const generarPanel = (lang) => {
+        const embed = new EmbedBuilder()
+            .setTitle(i18n[lang].welcome_title)
+            .setDescription(`${i18n[lang].welcome_desc}\n\n${i18n[lang].kbps_advice}\n\n⚠️ **Acción Requerida:** Confirma la configuración. Si no hay respuesta en 10 min, me retiraré para no dejar rastro.`)
+            .setColor('#FF9900')
+            .setFooter({ text: 'Sistema de Laboratorio VitaBot 🔨' });
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`confirm_setup_${guild.id}`)
+                .setLabel(i18n[lang].setup_button)
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅'),
+            new ButtonBuilder()
+                .setCustomId(`change_lang_${lang === 'es' ? 'en' : 'es'}`)
+                .setLabel(i18n[lang].lang_button)
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId(`cancel_setup_${guild.id}`)
+                .setLabel(lang === 'es' ? 'Abandonar' : 'Leave')
+                .setStyle(ButtonStyle.Danger)
+        );
+
+        return { embeds: [embed], components: [row] };
+    };
+
+    const msg = await auditChannel.send(generarPanel(currentLang));
+
+    // 4. TEMPORIZADOR DE AUTO-LIMPIEZA (10 Minutos)
+    const timeout = setTimeout(async () => {
+        if (guild.available) {
+            console.log(`» | Expulsión automática: Sin respuesta en ${guild.name}.`);
+            await auditChannel.delete().catch(() => null); 
+            await guild.leave().catch(() => null);
+        }
+    }, 10 * 60 * 1000);
+
+    // 5. COLECTOR DE INTERACCIONES (Solo Administradores)
+    const collector = msg.createMessageComponentCollector({ 
+        filter: (i) => i.member.permissions.has('Administrator'), 
+        time: 10 * 60 * 1000 
+    });
+
+    collector.on('collect', async (interaction) => {
+        // --- CASO: CONFIRMAR CONFIGURACIÓN ---
+        if (interaction.customId.startsWith('confirm_setup')) {
+            clearTimeout(timeout);
+            
+            await log(guild, {
+                categoria: 'sistema',
+                titulo: 'Sistema Vinculado',
+                descripcion: 'La configuración inicial ha sido completada y guardada en el servidor.',
+                usuario: interaction.user
+            });
+
+            await interaction.update({ 
+                content: '✅ **Configuración finalizada.** El sistema de auditoría y música Hi-Fi está listo.', 
+                embeds: [], 
+                components: [] 
+            });
+            collector.stop();
+
+        // --- CASO: CAMBIAR IDIOMA (Actualiza JSON y UI) ---
+        } else if (interaction.customId.startsWith('change_lang')) {
+            const nuevoLang = interaction.customId.split('_')[2];
+            
+            // Guardamos el cambio en tu audit-config.json
+            actualizarConfigServidor(guild.id, { idioma: nuevoLang });
+            
+            // Actualizamos el mensaje original con el nuevo idioma inmediatamente
+            await interaction.update(generarPanel(nuevoLang));
+
+        // --- CASO: ABANDONAR ---
+        } else if (interaction.customId.startsWith('cancel_setup')) {
+            clearTimeout(timeout);
+            console.log(`» | El administrador rechazó a Vita en ${guild.name}.`);
+            await auditChannel.delete().catch(() => null);
+            await guild.leave().catch(() => null);
+        }
+    });
+
+    collector.on('end', (collected, reason) => {
+        if (reason === 'time' && collected.size === 0) {
+            console.log(`» | Colector cerrado por tiempo agotado en ${guild.name}.`);
+        }
+    });
 });
 
 client.login(process.env.TOKEN);

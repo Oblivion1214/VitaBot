@@ -1,6 +1,6 @@
 // commands/clear.js
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder } = require('discord.js');
-const { log } = require('../utils/logger');
+const { log, sanitizeErrorMessage } = require('../utils/logger');
 
 module.exports = {
     cooldown: 10,

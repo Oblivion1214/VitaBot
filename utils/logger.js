@@ -55,6 +55,7 @@ function obtenerConfigServidor(guildId) {
     if (!config[guildId]) {
         config[guildId] = {
             activo: true,
+            idioma: idiomaInicial, // <-- Nueva propiedad de memoria
             categorias: {
                 musica: true,
                 moderacion: true,
@@ -154,5 +155,6 @@ module.exports = {
     log, 
     obtenerConfigServidor, 
     actualizarConfigServidor,
-    sanitizeErrorMessage // Exportamos por si necesitas usarla en otros archivos
+    obtenerCanalLog, // <--- Agrega esta línea para exportar la función
+    sanitizeErrorMessage 
 };
