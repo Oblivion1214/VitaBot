@@ -2,20 +2,20 @@
 .env
 .env.local
 
-# Cookies de YouTube — contienen sesión de tu cuenta
+# Cookies de YouTube — contienen sesión de cuenta de YouTube, NUNCA subir esto
 youtube-cookie.json
 
-# Configuración de auditoría — datos del servidor
+# Configuración de auditoría — datos del servidor y credenciales, NUNCA subir esto
 audit-config.json
 
 # Dependencias — se reinstalan con npm install
 node_modules/
 
-# Archivos de sistema
+# Archivos de sistema de macOS y Windows
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs de desarrollo y producción
 *.log
 
 # Archivos de prueba y desarrollo
