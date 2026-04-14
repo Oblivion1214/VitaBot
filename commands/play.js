@@ -78,8 +78,8 @@ module.exports = {
                     metadata: { canal: interaction.channel },
                     leaveOnEmpty: true,
                     leaveOnEmptyCooldown: 5000,
-                    leaveOnEnd: false,
-                    volume: 100,
+                    leaveOnEnd: true,
+                    volume: 90,
                     selfDeaf: true
                 }
             });
