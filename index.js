@@ -95,6 +95,7 @@ function limpiarParaLyrics(texto, autor) {
         .replace(/\(Letra\)/gi, '')
         .replace(/\(Letra Lyrics\)/gi, '')
         .replace(/\(Video Oficial\)/gi, '')
+        .replace(/\(Video\)/gi, '')
         .replace(/\(Official Video\)/gi, '')
         .replace(/\(Lyrics\)/gi, '')
         .replace(/\(Audio Oficial\)/gi, '')
@@ -371,7 +372,11 @@ for (const file of commandFiles) {
 }
 
 client.once("clientReady", () => {
+    // Logueamos el tag del bot para confirmar que se ha iniciado correctamente
     console.log(`» | VitaBot encendido como: ${client.user.tag}`);
+    // Configura el estado visual (Activity)
+    client.user.setActivity('/play | v3.0 Hi-Fi', { type: 2 }); // Type 3 es "Watching"
+    // Logueamos la cantidad de comandos cargados para verificar que todo esté en orden
     console.log(`» | ${client.commands.size} comandos listos.`);
 });
 
