@@ -4,7 +4,8 @@ const { log } = require('../utils/logger');
 const respuestas = [
     "Es cierto.", "Definitivamente.", "Sin duda.", "Sí, absolutamente.", "Puedes contar con ello.",
     "Como yo lo veo, sí.", "Lo más probable.", "Se ve bien.", "Sí.", "Las señales apuntan a que sí.",
-    "Respuesta confusa, intenta otra vez.", "Pregunta de nuevo más tarde.", "Mejor no decirte ahora.", "No se puede predecir ahora.", "Concéntrate y pregunta de nuevo.",
+    "Respuesta confusa, intenta otra vez.", "Pregunta de nuevo más tarde.", "Mejor no decirte ahora.", 
+    "No se puede predecir ahora.", "Concéntrate y pregunta de nuevo.",
     "No cuentes con ello.", "Mi respuesta es no.", "Mis fuentes dicen que no.", "Se ve muy mal.", "Muy dudoso."
 ];
 

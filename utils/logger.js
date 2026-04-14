@@ -1,4 +1,4 @@
-// utils/logger.js — Sistema de auditoría de VitaBot
+// utils/logger.js — Sistema de auditoría reforzado de VitaBot
 const { EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -22,18 +22,18 @@ const EMOJIS = {
     general: '⚙️',
 };
 
-// Categoría de cada comando
-const CATEGORIAS_COMANDOS = {
-    play: 'musica',
-    stop: 'musica',
-    clear: 'moderacion',
-    roles: 'moderacion',
-    chatconvita: 'general',
-    gacha: 'general',
-    ping: 'general',
-    ppt: 'general',
-    bola8: 'general',
-};
+// --- UTILIDADES DE SEGURIDAD ---
+
+/**
+ * Elimina rutas locales (C:\Users\... o /home/...) de los mensajes de error
+ * para evitar fugas de información del servidor.
+ */
+function sanitizeErrorMessage(message) {
+    if (!message) return 'Error desconocido';
+    // Regex para detectar patrones de rutas en Windows y Linux
+    const pathRegex = /([a-zA-Z]:\\(?:[^\\\s]+\\)+|(?:\/[^/\s]+)+\/)/g;
+    return message.replace(pathRegex, '[RUTA_PROTEGIDA]/');
+}
 
 // --- GESTIÓN DE CONFIGURACIÓN ---
 
@@ -53,9 +53,9 @@ function guardarConfig(config) {
 function obtenerConfigServidor(guildId) {
     const config = cargarConfig();
     if (!config[guildId]) {
-        // Por defecto todas las categorías activas
         config[guildId] = {
             activo: true,
+            idioma: idiomaInicial, // <-- Nueva propiedad de memoria
             categorias: {
                 musica: true,
                 moderacion: true,
@@ -74,7 +74,7 @@ function actualizarConfigServidor(guildId, nuevaConfig) {
     guardarConfig(config);
 }
 
-// --- CANAL DE LOGS ---
+// --- GESTIÓN DEL CANAL DE AUDITORÍA ---
 
 async function obtenerCanalLog(guild) {
     const canalExistente = guild.channels.cache.find(
@@ -86,10 +86,12 @@ async function obtenerCanalLog(guild) {
         { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }
     ];
 
+    // Solo roles con permisos de gestión pueden ver el canal
     const rolesMod = guild.roles.cache.filter(rol =>
         rol.permissions.has(PermissionFlagsBits.ManageMessages) ||
         rol.permissions.has(PermissionFlagsBits.ManageGuild)
     );
+
     rolesMod.forEach(rol => {
         permisosOverwrites.push({
             id: rol.id,
@@ -97,44 +99,23 @@ async function obtenerCanalLog(guild) {
         });
     });
 
-    const canal = await guild.channels.create({
+    return await guild.channels.create({
         name: LOG_CHANNEL_NAME,
         type: ChannelType.GuildText,
-        topic: '📋 Registro de auditoría de VitaBot — Solo visible para administradores y moderadores.',
+        topic: '📋 Auditoría de VitaBot — Protección de rutas y logs de sistema activos.',
         permissionOverwrites: permisosOverwrites,
     });
-
-    await canal.send({
-        embeds: [
-            new EmbedBuilder()
-                .setTitle('📋 Canal de Auditoría Creado')
-                .setDescription('Este canal registra automáticamente el uso de comandos y errores del bot.\n\nUsa `/auditoria` para configurar qué categorías auditar.')
-                .addFields(
-                    { name: `${EMOJIS.musica} Música`, value: 'Comandos de reproducción', inline: true },
-                    { name: `${EMOJIS.moderacion} Moderación`, value: 'Comandos de moderación', inline: true },
-                    { name: `${EMOJIS.sistema} Sistema`, value: 'Errores y eventos críticos', inline: true },
-                    { name: `${EMOJIS.general} General`, value: 'Resto de comandos', inline: true },
-                )
-                .setColor('#57F287')
-                .setTimestamp()
-                .setFooter({ text: 'VitaBot Logger 🔨' })
-        ]
-    });
-
-    return canal;
 }
 
 // --- FUNCIÓN PRINCIPAL DE LOG ---
 
-async function log(guild, { categoria = 'general', titulo, descripcion, campos = [], usuario, error, comando }) {
+/**
+ * Envía un log al canal de auditoría con sanitización automática.
+ */
+async function log(guild, { categoria = 'general', titulo, descripcion, campos = [], usuario, error }) {
     try {
         const configServidor = obtenerConfigServidor(guild.id);
-
-        // Si la auditoría global está desactivada, salimos
-        if (!configServidor.activo) return;
-
-        // Si la categoría está desactivada, salimos
-        if (!configServidor.categorias[categoria]) return;
+        if (!configServidor.activo || !configServidor.categorias[categoria]) return;
 
         const canal = await obtenerCanalLog(guild);
 
@@ -143,7 +124,7 @@ async function log(guild, { categoria = 'general', titulo, descripcion, campos =
             .setDescription(descripcion)
             .setColor(COLORS[categoria] || COLORS.general)
             .setTimestamp()
-            .setFooter({ text: 'VitaBot Logger 🔨' });
+            .setFooter({ text: 'VitaBot Shield 🔨 — Logs Sanitizados' });
 
         if (usuario) {
             embed.setAuthor({
@@ -154,14 +135,26 @@ async function log(guild, { categoria = 'general', titulo, descripcion, campos =
 
         if (campos.length > 0) embed.addFields(campos);
 
+        // APLICACIÓN DE SEGURIDAD: Sanitizamos el error antes de mostrarlo
         if (error) {
-            embed.addFields({ name: '❌ Error', value: `\`\`\`${error.substring(0, 1000)}\`\`\`` });
+            const errorLimpio = sanitizeErrorMessage(error);
+            embed.addFields({ 
+                name: '❌ Detalle Técnico (Sanitizado)', 
+                value: `\`\`\`${errorLimpio.substring(0, 1000)}\`\`\`` 
+            });
         }
 
         await canal.send({ embeds: [embed] });
     } catch(e) {
-        console.error('[Logger] Error al enviar log:', e.message);
+        // En caso de error en el logger, usamos la consola para no entrar en bucle
+        console.error('[Logger Critical Error]:', e.message);
     }
 }
 
-module.exports = { log, obtenerConfigServidor, actualizarConfigServidor, CATEGORIAS_COMANDOS };
+module.exports = { 
+    log, 
+    obtenerConfigServidor, 
+    actualizarConfigServidor,
+    obtenerCanalLog, // <--- Agrega esta línea para exportar la función
+    sanitizeErrorMessage 
+};
