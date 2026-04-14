@@ -100,6 +100,9 @@ function limpiarParaLyrics(texto, autor) {
         .replace(/\(Audio Oficial\)/gi, '')
         .replace(/\(Lyrics Video\)/gi, '')
         .replace(/\(Cover Audio\)/gi, '')
+        .replace(/\(Official Live Video\)/gi, '')
+        .replace(/\(Live Video\)/gi, '')
+        .replace(/\(Official Live\)/gi, '')
         .replace(/\[.*?\]/g, '') 
         .replace(/"/g, '')
         .replace(/\s+/g, ' ')
@@ -224,7 +227,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 getUrl: true,
                 noCheckCertificates: true,
                 noWarnings: true,
-            })).trim();
+            }, {windowsHide: true})).trim();
 
             const ffmpegProcess = spawn(ffmpegPath, [
                 '-reconnect', '1',
@@ -242,7 +245,9 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-b:a', '320k',
                 '-f', 'opus',
                 'pipe:1'
-            ], { stdio: ['ignore', 'pipe', 'pipe'] });
+            ], { stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true // <--- ESTA ES LA CLAVE PARA WINDOWS
+            });
 
             return { stream: ffmpegProcess.stdout, type: StreamType.Opus };
 
@@ -419,9 +424,16 @@ client.on("interactionCreate", async (interaction) => {
                 content: '❌ Mis circuitos mágicos han fallado al ejecutar este comando.', 
                 flags: MessageFlags.Ephemeral 
             };
-
-            if (interaction.replied || interaction.deferred) await interaction.followUp(msgError);
-            else await interaction.reply(msgError);
+            // Intentamos responder a la interacción, pero si ya expiró, simplemente no hacemos nada
+            try {
+                if (interaction.replied || interaction.deferred) {
+                    await interaction.followUp(msgError);
+                } else {
+                    await interaction.reply(msgError);
+                }
+            } catch (interactionError) {
+                console.error('[Anti-Crash] La interacción expiró antes de poder enviar el error:', interactionError.message);
+            }
         }
 
     // 2. MANEJO DE BOTONES (MÚSICA Y JUEGOS)
