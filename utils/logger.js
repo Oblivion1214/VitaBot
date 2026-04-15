@@ -6,7 +6,6 @@ const path = require('path');
 const LOG_CHANNEL_NAME = 'vitabot-logs';
 const CONFIG_PATH = path.join(__dirname, '../audit-config.json');
 
-// Colores por categoría
 const COLORS = {
     musica: '#FF9900',
     moderacion: '#5865F2',
@@ -14,7 +13,6 @@ const COLORS = {
     general: '#57F287',
 };
 
-// Emojis por categoría
 const EMOJIS = {
     musica: '🎵',
     moderacion: '🛡️',
@@ -24,13 +22,8 @@ const EMOJIS = {
 
 // --- UTILIDADES DE SEGURIDAD ---
 
-/**
- * Elimina rutas locales (C:\Users\... o /home/...) de los mensajes de error
- * para evitar fugas de información del servidor.
- */
 function sanitizeErrorMessage(message) {
     if (!message) return 'Error desconocido';
-    // Regex para detectar patrones de rutas en Windows y Linux
     const pathRegex = /([a-zA-Z]:\\(?:[^\\\s]+\\)+|(?:\/[^/\s]+)+\/)/g;
     return message.replace(pathRegex, '[RUTA_PROTEGIDA]/');
 }
@@ -47,15 +40,20 @@ function cargarConfig() {
 }
 
 function guardarConfig(config) {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    try {
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+    } catch (e) {
+        console.error('[Logger] Error al escribir audit-config.json:', e.message);
+    }
 }
 
-function obtenerConfigServidor(guildId) {
+// Corregido: Se asegura de que el parámetro tenga un valor por defecto claro y se maneja la creación de la configuración inicial de manera más robusta.
+function obtenerConfigServidor(guildId, idiomaDefecto = 'es') {
     const config = cargarConfig();
     if (!config[guildId]) {
         config[guildId] = {
             activo: true,
-            idioma: idiomaInicial, // <-- Nueva propiedad de memoria
+            idioma: idiomaDefecto, 
             categorias: {
                 musica: true,
                 moderacion: true,
@@ -77,51 +75,73 @@ function actualizarConfigServidor(guildId, nuevaConfig) {
 // --- GESTIÓN DEL CANAL DE AUDITORÍA ---
 
 async function obtenerCanalLog(guild) {
-    const canalExistente = guild.channels.cache.find(
+    if (!guild) return null;
+
+    // Buscamos si ya existe el canal
+    let canal = guild.channels.cache.find(
         c => c.name === LOG_CHANNEL_NAME && c.type === ChannelType.GuildText
     );
-    if (canalExistente) return canalExistente;
 
-    const permisosOverwrites = [
-        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] }
-    ];
+    if (canal) return canal;
 
-    // Solo roles con permisos de gestión pueden ver el canal
-    const rolesMod = guild.roles.cache.filter(rol =>
-        rol.permissions.has(PermissionFlagsBits.ManageMessages) ||
-        rol.permissions.has(PermissionFlagsBits.ManageGuild)
-    );
+    // Verificación de seguridad: ¿El bot tiene permisos para crear canales?
+    if (!guild.members.me || !guild.members.me.permissions.has(PermissionFlagsBits.ManageChannels)) {
+        console.error(`[Logger] Error: No tengo permisos de 'ManageChannels' en ${guild.name}.`);
+        return null;
+    }
 
-    rolesMod.forEach(rol => {
-        permisosOverwrites.push({
-            id: rol.id,
-            allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+    try {
+        const permisosOverwrites = [
+            // Ocultar a todos
+            { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+            // Dar acceso explícito al Owner (Tú)
+            { id: guild.ownerId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages] },
+            // Dar acceso al propio Bot para que pueda escribir
+            { id: guild.members.me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks] }
+        ];
+
+        // Incluimos roles con permisos de moderación
+        const rolesMod = guild.roles.cache.filter(rol =>
+            rol.permissions.has(PermissionFlagsBits.ManageMessages) ||
+            rol.permissions.has(PermissionFlagsBits.ManageGuild)
+        );
+
+        rolesMod.forEach(rol => {
+            permisosOverwrites.push({
+                id: rol.id,
+                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+            });
         });
-    });
 
-    return await guild.channels.create({
-        name: LOG_CHANNEL_NAME,
-        type: ChannelType.GuildText,
-        topic: '📋 Auditoría de VitaBot — Protección de rutas y logs de sistema activos.',
-        permissionOverwrites: permisosOverwrites,
-    });
+        return await guild.channels.create({
+            name: LOG_CHANNEL_NAME,
+            type: ChannelType.GuildText,
+            topic: '📋 Auditoría de VitaBot — Protección de rutas y logs de sistema activos.',
+            permissionOverwrites: permisosOverwrites,
+        });
+    } catch (e) {
+        console.error('[Logger] Fallo al crear canal de logs:', e.message);
+        return null;
+    }
 }
 
 // --- FUNCIÓN PRINCIPAL DE LOG ---
 
-/**
- * Envía un log al canal de auditoría con sanitización automática.
- */
 async function log(guild, { categoria = 'general', titulo, descripcion, campos = [], usuario, error }) {
+    if (!guild) return;
+
     try {
         const configServidor = obtenerConfigServidor(guild.id);
         if (!configServidor.activo || !configServidor.categorias[categoria]) return;
 
         const canal = await obtenerCanalLog(guild);
+        
+        // CORRECCIÓN CRÍTICA: Verificamos si el canal existe antes de intentar enviar
+        if (!canal) return;
 
         const embed = new EmbedBuilder()
             .setTitle(`${EMOJIS[categoria] || '⚙️'} ${titulo}`)
-            .setDescription(descripcion)
+            .setDescription(descripcion || 'Sin descripción disponible.')
             .setColor(COLORS[categoria] || COLORS.general)
             .setTimestamp()
             .setFooter({ text: 'VitaBot Shield 🔨 — Logs Sanitizados' });
@@ -135,18 +155,16 @@ async function log(guild, { categoria = 'general', titulo, descripcion, campos =
 
         if (campos.length > 0) embed.addFields(campos);
 
-        // APLICACIÓN DE SEGURIDAD: Sanitizamos el error antes de mostrarlo
         if (error) {
             const errorLimpio = sanitizeErrorMessage(error);
             embed.addFields({ 
                 name: '❌ Detalle Técnico (Sanitizado)', 
-                value: `\`\`\`${errorLimpio.substring(0, 1000)}\`\`\`` 
+                value: `\`\`\`${errorLimpio.substring(0, 1024)}\`\`\`` 
             });
         }
 
-        await canal.send({ embeds: [embed] });
+        await canal.send({ embeds: [embed] }).catch(err => console.error('[Logger] Error al enviar mensaje:', err.message));
     } catch(e) {
-        // En caso de error en el logger, usamos la consola para no entrar en bucle
         console.error('[Logger Critical Error]:', e.message);
     }
 }
@@ -155,6 +173,6 @@ module.exports = {
     log, 
     obtenerConfigServidor, 
     actualizarConfigServidor,
-    obtenerCanalLog, // <--- Agrega esta línea para exportar la función
+    obtenerCanalLog,
     sanitizeErrorMessage 
 };

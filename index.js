@@ -2,6 +2,7 @@
 // 1. CARGA DE ENTORNO (siempre lo primero)
 require('dotenv').config();
 
+// 2. IMPORTACIONES PRINCIPALES
 const {
     Client, Collection, GatewayIntentBits, MessageFlags,
     EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle
@@ -16,7 +17,7 @@ const youtubeExt = require('youtube-ext');
 const youtubedl = require('youtube-dl-exec');
 const { log, sanitizeErrorMessage, obtenerConfigServidor, actualizarConfigServidor, obtenerCanalLog } = require('./utils/logger');
 
-
+// CARGA DE COMANDOS
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -33,6 +34,7 @@ const geniusClient = new Genius.Client(process.env.GENIUS_TOKEN);
 client.genius = geniusClient;
 console.log('» | Motor de letras (Genius SDK) sincronizado.');
 
+// Configuración de i18n para la bienvenida
 const i18n = {
     es: {
         welcome_title: "✨ Vita Graf Eisen: Conectada",
@@ -53,8 +55,8 @@ const i18n = {
 client.commands = new Collection();
 client.cooldowns = new Collection();
 
-// --- CONFIGURACIÓN DE MÚSICA ---
-
+// --------- CONFIGURACIÓN DE MÚSICA ---------
+// CARGA DE LA COOKIE DE YOUTUBE (si existe)
 let youtubeCookie = '';
 try {
     youtubeCookie = fs.readFileSync('./youtube-cookie.json', 'utf-8').trim()
@@ -64,6 +66,7 @@ try {
     console.warn('» | Sin cookie de YouTube, algunas canciones pueden fallar.');
 }
 
+// Función de limpieza de URLs para evitar errores con FFmpeg y yt-dlp
 function cleanYoutubeUrl(url) {
     try {
         const u = new URL(url);
@@ -71,13 +74,20 @@ function cleanYoutubeUrl(url) {
         const dominiosSeguros = ['youtube.com', 'youtu.be', 'music.youtube.com', 'googleusercontent.com'];
         if (!dominiosSeguros.some(d => u.hostname.endsWith(d))) return null;
 
-        const videoId = u.searchParams.get('v') || u.pathname.split('/').pop();
+        // Extraemos el ID sin importar si es music.youtube o youtube normal
+        let videoId = u.searchParams.get('v');
+        if (!videoId && u.hostname === 'youtu.be') {
+            videoId = u.pathname.slice(1).split(/[?#]/)[0];
+        }
+
+        // Validamos que el ID tenga el formato correcto (11 caracteres alfanuméricos) para que FFmpeg y yt-dlp lo procesen sin errores
         return videoId ? `https://www.youtube.com/watch?v=${videoId}` : null;
     } catch(e) {
         return null;
     }
 }
 
+// Función para convertir segundos a formato mm:ss
 function secondsToTime(secs) {
     const s = parseInt(secs || '0');
     const m = Math.floor(s / 60);
@@ -121,6 +131,7 @@ function limpiarParaLyrics(texto, autor) {
     return limpio;
 }
 
+// Extractor personalizado para manejar YouTube y Spotify con mayor precisión
 class YoutubeExtExtractor extends BaseExtractor {
     static identifier = 'com.vitabot.youtube-ext';
 
@@ -137,7 +148,7 @@ class YoutubeExtExtractor extends BaseExtractor {
 
     async handle(query, context) {
         try {
-            // --- SOPORTE SPOTIFY ---
+            // ------ SOPORTE SPOTIFY ------
             if (query.includes('spotify.com/track/')) {
                 const trackId = query.match(/track\/([a-zA-Z0-9]+)/)?.[1];
                 if (!trackId) return { playlist: null, tracks: [] };
@@ -170,15 +181,39 @@ class YoutubeExtExtractor extends BaseExtractor {
                 return { playlist: null, tracks: [track] };
             }
 
-            // --- SOPORTE YOUTUBE Y BÚSQUEDA POR NOMBRE ---
+            // ------ SOPORTE YOUTUBE Y BÚSQUEDA POR NOMBRE ------
             let videoUrl;
 
             if (query.includes('youtube.com') || query.includes('youtu.be')) {
                 videoUrl = cleanYoutubeUrl(query);
+                console.log(`[YoutubeExt] 🔗 Link directo detectado: ${videoUrl}`); // Nuevo Log
             } else {
-                const results = await youtubeExt.search(query, { type: 'video', limit: 1 });
+                // PRIORIZACIÓN: Si es búsqueda de texto, añadimos "topic" o "music" 
+                // para que youtube-ext devuelva resultados de YT Music primero
+                const searchQuery = query.includes('music') ? query : `${query} music topic`;
+                const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 10 }); // Pedimos 10 para el menú
                 if (!results?.videos?.length) return { playlist: null, tracks: [] };
-                videoUrl = cleanYoutubeUrl(results.videos[0].url);
+
+                // Registro de cantidad de resultados
+                console.log(`[YoutubeExt] 🔍 Búsqueda: "${searchQuery}" | Resultados devueltos: ${results?.length || 10}`);
+                
+                // Mapeamos los resultados para que el comando play.js pueda usarlos en el menú
+                const tracks = results.videos.map(video => {
+                    const track = new Track(this.context.player, {
+                        title: video.title,
+                        url: cleanYoutubeUrl(video.url),
+                        duration: video.duration?.text || '0:00',
+                        thumbnail: video.thumbnails?.[0]?.url || '',
+                        author: video.channel?.name || 'YouTube Music',
+                        requestedBy: context.requestedBy,
+                        source: 'youtube',
+                        queryType: context.type
+                    });
+                    track.extractor = this;
+                    return track;
+                });
+
+                return { playlist: null, tracks: tracks };
             }
 
             const info = await youtubeExt.videoInfo(videoUrl, {
@@ -263,6 +298,7 @@ class YoutubeExtExtractor extends BaseExtractor {
     }
 }
 
+// Inicializamos el reproductor y registramos el extractor personalizado
 const player = new Player(client);
 
 // Actualiza la función inicializarMusica
@@ -281,10 +317,12 @@ async function inicializarMusica() {
     }
 }
 
+// Llamamos a la función de inicialización al iniciar el bot
 inicializarMusica();
 
-// --- EVENTOS DE MÚSICA REFORZADOS EN index.js ---
+// --- EVENTOS DE MÚSICA REFORZADOS ---
 
+// Escuchamos el evento de inicio de pista para enviar un panel de control con botones
 player.events.on('playerStart', async (queue, track) => {
     // 1. FILTRO: Si la pista no tiene título real (como el TTS), no enviamos panel
     if (track.url.includes('translate_tts')) return;
@@ -317,6 +355,7 @@ player.events.on('playerStart', async (queue, track) => {
             .setStyle(ButtonStyle.Secondary)
     );
 
+    // 2. Enviamos el mensaje al canal de texto asociado a la cola (si existe)
     if (queue.metadata?.canal) {
         // Enviamos ambas filas de botones
         const mensaje = await queue.metadata.canal.send({ 
@@ -327,6 +366,7 @@ player.events.on('playerStart', async (queue, track) => {
     }
 });
 
+// Función para limpiar la interfaz de botones cuando la cola se vacía o el bot se desconecta
 const limpiarInterfaz = async (queue) => {
     if (queue.metadata?.ultimoMensaje) {
         await queue.metadata.ultimoMensaje.edit({ components: [] }).catch(() => null);
@@ -334,9 +374,10 @@ const limpiarInterfaz = async (queue) => {
     }
 };
 
+// Escuchamos eventos de finalización para limpiar botones y evitar sesiones huérfanas
 player.events.on('emptyQueue', (queue) => limpiarInterfaz(queue));
 player.events.on('disconnect', (queue) => limpiarInterfaz(queue));
-
+// Escuchamos el evento de error para limpiar conexiones ociosas de TTS
 player.events.on('error', (queue, error) => {
     console.error(`[Error de Sistema]: ${error.message}`);
     if (queue?.guild) {
@@ -348,7 +389,7 @@ player.events.on('error', (queue, error) => {
         }).catch(() => null);
     }
 });
-
+// Escuchamos el evento de error para limpiar conexiones ociosas de TTS
 player.events.on('playerError', (queue, error) => {
     console.error(`[Error de Audio]: ${error.message}`);
     if (queue?.guild) {
@@ -365,21 +406,38 @@ player.events.on('playerError', (queue, error) => {
 });
 
 // CARGA DE COMANDOS
+// IMPORTANTE: Cargamos los comandos después de configurar los eventos de música para evitar condiciones de carrera
 const commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js'));
 for (const file of commandFiles) {
     const command = require(`./commands/${file}`);
     client.commands.set(command.data.name, command);
 }
 
-client.once("clientReady", () => {
-    // Logueamos el tag del bot para confirmar que se ha iniciado correctamente
+// LOGUEO DE INICIO Y CONFIGURACIÓN DE ESTADO
+client.once("clientReady", async () => {
     console.log(`» | VitaBot encendido como: ${client.user.tag}`);
-    // Configura el estado visual (Activity)
-    client.user.setActivity('/play | v3.0 Hi-Fi', { type: 2 }); // Type 3 es "Watching"
-    // Logueamos la cantidad de comandos cargados para verificar que todo esté en orden
+    client.user.setActivity('/play | v3.0 Hi-Fi', { type: 2 });
     console.log(`» | ${client.commands.size} comandos listos.`);
+
+    // --- RECONCILIACIÓN DE SERVIDORES ---
+    // Cubre joins que ocurrieron mientras el bot estaba apagado (PM2 restart/downtime)
+    console.log(`» | Reconciliando ${client.guilds.cache.size} servidor(es)...`);
+    for (const guild of client.guilds.cache.values()) {
+        const config = obtenerConfigServidor(guild.id);
+
+        // Si ya completó el setup, ignorar
+        if (config._setupCompleto) continue;
+
+        // Si no tiene el canal, el guildCreate se perdió durante el downtime
+        const canalExistente = guild.channels.cache.find(c => c.name === 'vitabot-logs');
+        if (!canalExistente) {
+            console.log(`» | [Reconciliación] Re-enviando bienvenida a "${guild.name}".`);
+            client.emit('guildCreate', guild);
+        }
+    }
 });
 
+// Manejo de interacciones (comandos y botones)
 client.on("interactionCreate", async (interaction) => {
     // 1. MANEJO DE COMANDOS DE BARRA (SLASH COMMANDS)
     if (interaction.isChatInputCommand()) {
@@ -434,7 +492,7 @@ client.on("interactionCreate", async (interaction) => {
                 if (interaction.replied || interaction.deferred) {
                     await interaction.followUp(msgError);
                 } else {
-                    await interaction.reply(msgError);
+                    await interaction.reply({ content: '❌ Fallo crítico al ejecutar el comando.', flags: MessageFlags.Ephemeral }).catch(() => null);
                 }
             } catch (interactionError) {
                 console.error('[Anti-Crash] La interacción expiró antes de poder enviar el error:', interactionError.message);
@@ -587,8 +645,7 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // Implementación de Fase 1 (Bienvenida y Verificación)
-// index.js — Implementación Final de guildCreate con Memoria JSON
-
+// Implementación Final de guildCreate con Memoria JSON
 client.on("guildCreate", async (guild) => {
     console.log(`» | Vita detectada en: ${guild.name}. Iniciando protocolo de bienvenida.`);
 
@@ -597,7 +654,8 @@ client.on("guildCreate", async (guild) => {
     const sugerenciaLang = guild.preferredLocale === 'es-ES' ? 'es' : 'en';
     // Obtenemos o creamos la config en audit-config.json
     let config = obtenerConfigServidor(guild.id, sugerenciaLang); 
-    let currentLang = config.idioma || sugerenciaLang;
+    // Sanitizamos: si el idioma guardado no es válido, usamos la sugerencia
+    let currentLang = (config.idioma === 'es' || config.idioma === 'en') ? config.idioma : sugerenciaLang;
 
     // 2. OBTENCIÓN DEL CANAL (Usa tu lógica de vitabot-logs)
     const auditChannel = await obtenerCanalLog(guild);
@@ -629,6 +687,13 @@ client.on("guildCreate", async (guild) => {
         return { embeds: [embed], components: [row] };
     };
 
+    // Guard: si no se pudo crear el canal (sin permisos), salimos limpiamente
+    if (!auditChannel) {
+        console.warn(`» | [guildCreate] Sin permisos de ManageChannels en "${guild.name}". Setup omitido.`);
+        return;
+    }
+
+    // Enviamos el mensaje de bienvenida con la interfaz de configuración
     const msg = await auditChannel.send(generarPanel(currentLang));
 
     // 4. TEMPORIZADOR DE AUTO-LIMPIEZA (10 Minutos)
@@ -646,11 +711,15 @@ client.on("guildCreate", async (guild) => {
         time: 10 * 60 * 1000 
     });
 
+    // Manejo de interacciones con botones
     collector.on('collect', async (interaction) => {
         // --- CASO: CONFIRMAR CONFIGURACIÓN ---
         if (interaction.customId.startsWith('confirm_setup')) {
             clearTimeout(timeout);
-            
+
+            // Marcamos el setup como completo para que la reconciliación no lo repita
+            actualizarConfigServidor(guild.id, { _setupCompleto: true });
+
             await log(guild, {
                 categoria: 'sistema',
                 titulo: 'Sistema Vinculado',
@@ -684,6 +753,7 @@ client.on("guildCreate", async (guild) => {
         }
     });
 
+    // Manejo del fin del colector para limpiar el mensaje si se agota el tiempo sin interacciones
     collector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
             console.log(`» | Colector cerrado por tiempo agotado en ${guild.name}.`);
@@ -691,6 +761,7 @@ client.on("guildCreate", async (guild) => {
     });
 });
 
+// INICIAMOS EL BOT
 client.login(process.env.TOKEN);
 
 // Manejo global de errores para evitar que el proceso muera

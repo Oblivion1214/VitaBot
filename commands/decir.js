@@ -41,8 +41,9 @@ module.exports = {
                 .setMaxLength(200)),
 
     async execute(interaction) {
-        const canalVoz = interaction.member.voice.channel;
+        const canalVoz = interaction.member?.voice?.channel;
         const queue = useQueue(interaction.guildId); //
+        const member = interaction.member;
 
         // 1. BLOQUEO DE SEGURIDAD (Smart Lock): No hablar si hay música
         // Esto evita el error de FFmpeg -10054 al no haber intercambio de suscriptores.
@@ -53,10 +54,19 @@ module.exports = {
             });
         }
 
-        if (!canalVoz) return interaction.reply({ 
-            content: '❌ Únete a un canal de voz primero.', 
-            flags: MessageFlags.Ephemeral 
-        });
+        if (!member?.voice?.channel) {
+            return interaction.reply({ 
+                content: '¡Aprende a usar Graf Eisen! Entra a un canal de voz primero.', 
+                flags: MessageFlags.Ephemeral 
+            });
+        }
+    
+        if (!canalVoz) {
+            return interaction.reply({ 
+                content: '¡Escucha bien! No puedo hablarle a las paredes. ¡Entra en un canal de voz ahora mismo!', 
+                flags: MessageFlags.Ephemeral 
+            });
+        }
 
         if (enEjecucion.has(interaction.guildId)) {
             return interaction.reply({ 
@@ -103,7 +113,7 @@ module.exports = {
                     '-b:a', '128k',
                     '-f', 'ogg',
                     'pipe:1'
-                ], { stdio: ['pipe', 'pipe', 'pipe'] });
+                ], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
                 const chunks = [];
                 ff.stdout.on('data', chunk => chunks.push(chunk));
