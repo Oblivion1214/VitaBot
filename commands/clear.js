@@ -1,6 +1,6 @@
-// commands/clear.js
+// commands/clear.js — Sistema de Limpieza con Auditoría Sanitizada
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, EmbedBuilder } = require('discord.js');
-const { log, sanitizeErrorMessage } = require('../utils/logger');
+const { log, sanitizeErrorMessage } = require('../utils/logger'); //
 
 module.exports = {
     cooldown: 10,
@@ -18,11 +18,30 @@ module.exports = {
 
     async execute(interaction) {
         const cantidad = interaction.options.getInteger('cantidad');
+        // Usamos la propiedad channel directamente de la interacción
+        const canal = interaction.channel; 
+
+        // 1. VALIDACIÓN DE CANAL: Evita el error 'reading bulkDelete of null'
+        // Esto es crítico si el bot no tiene el scope 'bot' correctamente configurado
+        if (!canal || typeof canal.bulkDelete !== 'function') {
+            return interaction.reply({
+                content: '❌ Error técnico: No puedo acceder a las funciones de limpieza en este canal.',
+                flags: MessageFlags.Ephemeral
+            }).catch(() => null);
+        }
 
         try {
-            // El flag 'true' filtra automáticamente mensajes de más de 14 días
-            const borrados = await interaction.channel.bulkDelete(cantidad, true);
+            // 2. EJECUCIÓN DE LIMPIEZA
+            // El flag 'true' filtra mensajes de más de 14 días (límite de la API de Discord)
+            const borrados = await canal.bulkDelete(cantidad, true);
 
+            // 3. RESPUESTA AL USUARIO
+            await interaction.reply({
+                content: `✅ Limpieza ejecutada. Se borraron **${borrados.size}** mensajes correctamente.`,
+                flags: MessageFlags.Ephemeral
+            });
+
+            // 4. LOG DE CANAL (Público/Moderación)
             const logEmbed = new EmbedBuilder()
                 .setTitle('🧹 Limpieza de Canal')
                 .setDescription(`Se han eliminado **${borrados.size}** mensajes de este canal.`)
@@ -32,24 +51,20 @@ module.exports = {
                 )
                 .setColor('#5865F2')
                 .setTimestamp()
-                .setFooter({ text: 'VitaBot Logger 🔨' });
+                .setFooter({ text: 'VitaBot Shield 🔨' });
 
-            await interaction.reply({
-                content: `✅ Limpieza ejecutada. Se borraron ${borrados.size} mensajes.`,
-                flags: MessageFlags.Ephemeral
-            });
+            // Enviamos el aviso al canal, fallando silenciosamente si no hay permisos
+            await canal.send({ embeds: [logEmbed] }).catch(() => null);
 
-            await interaction.channel.send({ embeds: [logEmbed] });
-
-            // Log de auditoría privado
+            // 5. LOG DE AUDITORÍA PRIVADO (Usa logger.js)
             await log(interaction.guild, {
                 categoria: 'moderacion',
                 titulo: 'Limpieza de canal ejecutada',
-                descripcion: `Se eliminaron mensajes del canal <#${interaction.channelId}>.`,
+                descripcion: `Acción de limpieza realizada en el canal <#${canal.id}>.`,
                 campos: [
                     { name: '🗑️ Mensajes borrados', value: `${borrados.size}`, inline: true },
                     { name: '📋 Cantidad solicitada', value: `${cantidad}`, inline: true },
-                    { name: '📌 Canal', value: `<#${interaction.channelId}>`, inline: true },
+                    { name: '📌 ID Canal', value: `\`${canal.id}\``, inline: true },
                 ],
                 usuario: interaction.user,
             });
@@ -57,26 +72,25 @@ module.exports = {
         } catch (error) {
             console.error('[Clear Error]:', error);
 
+            // Reporte de error al sistema de auditoría con sanitización de rutas
             await log(interaction.guild, {
                 categoria: 'sistema',
                 titulo: 'Error en limpieza de canal',
-                descripcion: `Ocurrió un error al intentar borrar mensajes.`,
-                campos: [
-                    { name: '📌 Canal', value: `<#${interaction.channelId}>`, inline: true },
-                ],
+                descripcion: `Fallo al intentar ejecutar bulkDelete en el servidor.`,
                 usuario: interaction.user,
-                error: sanitizeErrorMessage(error.message),
-            });
+                error: sanitizeErrorMessage(error.message), //
+            }).catch(() => null);
 
             const errorResponse = {
-                content: '🚨 Hubo un error al intentar ejecutar la limpieza. Verifica mis permisos.',
+                content: '🚨 Hubo un error al intentar ejecutar la limpieza. Verifica mis permisos (Gestionar Mensajes).',
                 flags: MessageFlags.Ephemeral
             };
 
+            // Manejo seguro de respuestas para evitar "Unknown Interaction"
             if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(errorResponse);
+                await interaction.followUp(errorResponse).catch(() => null);
             } else {
-                await interaction.reply(errorResponse);
+                await interaction.reply(errorResponse).catch(() => null);
             }
         }
     },

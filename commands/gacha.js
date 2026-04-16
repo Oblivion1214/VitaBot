@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Definimos la ruta del archivo
-const RUTA_PERSONAJES = path.join(__dirname, '../personajes.json');
+const RUTA_PERSONAJES = path.join(__dirname, '../config/personajes.json');
 
 module.exports = {
     cooldown: 10, // Cooldown de seguridad aumentado
