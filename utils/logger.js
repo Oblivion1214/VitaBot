@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const LOG_CHANNEL_NAME = 'vitabot-logs';
-const CONFIG_PATH = path.join(__dirname, '../audit-config.json');
+const CONFIG_PATH = path.join(__dirname, '../config/audit-config.json');
 
 const COLORS = {
     musica: '#FF9900',

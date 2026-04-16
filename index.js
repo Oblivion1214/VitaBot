@@ -60,7 +60,7 @@ client.cooldowns = new Collection();
 let youtubeCookie = '';
 try {
     youtubeCookie = fs.readFileSync('./youtube-cookie.json', 'utf-8').trim()
-                      .replace(/^"|"$/g, '');
+                    .replace(/^"|"$/g, '');
     console.log('» | Cookie de YouTube cargada correctamente.');
 } catch(e) {
     console.warn('» | Sin cookie de YouTube, algunas canciones pueden fallar.');
