@@ -1,11 +1,11 @@
-// commands/audiostats.js — Monitor de Alta Fidelidad para Vita Graf Eisen
+// commands/audiostats.js — Monitor de Audio Hi-Fi
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { useQueue } = require('discord-player');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('audiostats')
-        .setDescription('Muestra las estadísticas técnicas reales del flujo de audio actual.'),
+        .setDescription('Muestra las métricas técnicas del flujo de audio actual.'),
 
     async execute(interaction) {
         const queue = useQueue(interaction.guildId);
@@ -13,7 +13,7 @@ module.exports = {
         // 1. Verificación de estado
         if (!queue || !queue.isPlaying()) {
             return interaction.reply({ 
-                content: '❌ No hay música activa en este momento para analizar.', 
+                content: '❌ No hay flujo de audio activo para analizar.', 
                 flags: MessageFlags.Ephemeral 
             });
         }
@@ -21,43 +21,42 @@ module.exports = {
         const track = queue.currentTrack;
         const canalVoz = interaction.guild.members.me.voice.channel;
         
-        // 2. Extracción de datos dinámicos
-        // El bitrate del canal viene en bps, lo pasamos a kbps
+        // 2. Extracción de datos de audio en tiempo real
         const channelBitrate = canalVoz.bitrate / 1000;
-        const voicePing = queue.connection.ping.udp || 0;
+        const voicePing = queue.connection?.ping?.udp ?? 0;
+        const progress = queue.node.createProgressBar();
 
-        // 3. Configuración de salida (Basada en tu index.js)
-        const outputBitrate = 320; // Forzado por FFmpeg en tu index.js
+        // El bitrate real de salida sigue la lógica adaptativa de tu motor
+        const outputBitrate = Math.min(channelBitrate, 256);
 
-        // 4. Construcción del monitor visual
+        // 3. Construcción del monitor visual
         const statsEmbed = new EmbedBuilder()
-            .setTitle('📊 Monitor de Alta Fidelidad - Graf Eisen')
-            // Cambia a verde si el canal soporta al menos 96kbps (Standard Hi-Fi)
+            .setTitle('📊 Monitor de Audio - Graf Eisen')
             .setColor(channelBitrate >= 96 ? '#00FF00' : '#E67E22') 
             .setThumbnail(track.thumbnail)
             .addFields(
                 { 
-                    name: '🎵 Fuente de Audio', 
-                    value: `**${track.title}**\n*Vía: ${track.author}*`, 
-                    inline: false 
+                    name: '🎵 Pista Actual', 
+                    value: `**[${track.title}](${track.url})**\n${progress}`, 
+                    inline: false
                 },
                 { 
-                    name: '📥 Captura del Host', 
-                    value: '`highestaudio (Opus/WebM)`', 
+                    name: '📥 Fuente', 
+                    value: '`Highest (Opus/WebM)`', 
                     inline: true 
                 },
                 { 
-                    name: '📤 Stream de Salida', 
-                    value: `\`${outputBitrate} kbps (CBR)\``, 
+                    name: '📤 Salida', 
+                    value: `\`${outputBitrate} kbps (Adaptativo)\``, 
                     inline: true 
                 },
                 { 
-                    name: '🎧 Límite del Canal', 
+                    name: '🎧 Canal', 
                     value: `\`${channelBitrate} kbps\``, 
                     inline: true 
                 },
                 { 
-                    name: '📶 Latencia (UDP)', 
+                    name: '📶 Latencia UDP', 
                     value: `\`${voicePing}ms\``, 
                     inline: true 
                 },
@@ -65,16 +64,12 @@ module.exports = {
                     name: '⚙️ Motor de Audio', 
                     value: '`FFmpeg libopus`', 
                     inline: true 
-                },
-                { 
-                    name: '🛡️ Estado del Buffer', 
-                    value: '`32MB (HighWaterMark)`', 
-                    inline: true 
                 }
             )
             .setFooter({ 
-                text: `Host: Windows Server 2025 | RAM: 31GB | Ubicación: Toluca/Metepec` 
-            }) //
+                text: `VitaBot — Protocolo de Alta Fidelidad 🔨`, 
+                iconURL: 'https://static.zerochan.net/Vita.1024.3831090.webp'
+            })
             .setTimestamp();
 
         return interaction.reply({ embeds: [statsEmbed] });
