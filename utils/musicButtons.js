@@ -1,7 +1,7 @@
 // utils/musicButtons.js — VitaBot
 // Manejador de botones de música: pausa, salto, stop, shuffle, cola y letras
 
-const { EmbedBuilder, MessageFlags } = require('discord.js');
+const { EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { limpiarParaLyrics } = require('./musicPlayer');
 
 /**
@@ -20,8 +20,12 @@ async function manejarBotonesMusica(interaction, player) {
         });
     }
 
-    // Validación de sesión: evita que botones viejos afecten la sesión actual
-    if (queue.metadata?.ultimoMensaje && interaction.message.id !== queue.metadata.ultimoMensaje.id) {
+    // Validación de sesión: evita que botones viejos afecten la sesión actual.
+    // ⚠️ Los botones de paginación (musica_queue_page_) están EXENTOS:
+    //    vienen del embed efímero de la cola, no del embed de "Reproduciendo Ahora",
+    //    por lo que su message.id nunca coincidirá con ultimoMensaje.id.
+    const esPaginacion = interaction.customId.startsWith('musica_queue_page_');
+    if (!esPaginacion && queue.metadata?.ultimoMensaje && interaction.message.id !== queue.metadata.ultimoMensaje.id) {
         return interaction.reply({
             content: '⚠️ Este panel de control es de una canción antigua. Usa el mensaje más reciente.',
             flags: MessageFlags.Ephemeral
@@ -74,29 +78,34 @@ async function manejarBotonesMusica(interaction, player) {
             });
         }
 
-        // ── 📜 VER COLA (VERSIÓN BLINDADA) ──
-        if (interaction.customId === 'musica_queue') {
+        // ── 📜 VER COLA (CON PAGINACIÓN) ──
+        if (interaction.customId === 'musica_queue' || interaction.customId.startsWith('musica_queue_page_')) {
             const currentTrack = queue.currentTrack;
             const tracks = queue.tracks.toArray();
-            const nextSongs = tracks.slice(0, 10);
 
-            // Sanitización y recorte de títulos para evitar errores de Discord (1024 chars por campo)
-            let listado = nextSongs.map((track, i) => {
-                // Removemos corchetes que rompen el formato [Título](URL)
+            const TRACKS_POR_PAGINA = 10;
+            const totalPaginas = Math.max(1, Math.ceil(tracks.length / TRACKS_POR_PAGINA));
+
+            // Extraer página actual del customId (musica_queue_page_2) o usar 0
+            let paginaActual = 0;
+            if (interaction.customId.startsWith('musica_queue_page_')) {
+                paginaActual = parseInt(interaction.customId.replace('musica_queue_page_', '')) || 0;
+            }
+            paginaActual = Math.max(0, Math.min(paginaActual, totalPaginas - 1));
+
+            const inicio = paginaActual * TRACKS_POR_PAGINA;
+            const tracksPagina = tracks.slice(inicio, inicio + TRACKS_POR_PAGINA);
+
+            let listado = tracksPagina.map((track, i) => {
                 const tituloSeguro = track.title.replace(/[\[\]]/g, '');
-                // Recortamos el título si es muy largo (máx 70 caracteres)
                 const tituloRecortado = tituloSeguro.length > 70 ? tituloSeguro.substring(0, 67) + '...' : tituloSeguro;
-                
-                return `**${i + 1}.** [${tituloRecortado}](${track.url}) - \`${track.duration}\``;
+                return `**${inicio + i + 1}.** [${tituloRecortado}](${track.url}) - \`${track.duration}\``;
             }).join('\n');
 
-            // Límite de seguridad para el campo "value" del Embed (máximo 1024 caracteres)
-            if (listado.length > 1000) {
-                listado = listado.substring(0, 997) + '...';
-            }
+            if (listado.length > 1000) listado = listado.substring(0, 997) + '...';
 
             const queueEmbed = new EmbedBuilder()
-                .setTitle(`🎼 Cola de Reproducción - ${interaction.guild.name}`)
+                .setTitle(`🎼 Cola de Reproducción — ${interaction.guild.name}`)
                 .setColor('#FF9900')
                 .setThumbnail(currentTrack.thumbnail)
                 .addFields(
@@ -106,17 +115,45 @@ async function manejarBotonesMusica(interaction, player) {
                         inline: false
                     },
                     {
-                        name: '⏭️ Próximas Canciones',
+                        name: `⏭️ Próximas Canciones (página ${paginaActual + 1}/${totalPaginas})`,
                         value: listado || '_No hay más canciones en la cola._',
                         inline: false
                     }
                 )
                 .setFooter({
-                    text: `Total de canciones: ${tracks.length} | Tiempo total: ${queue.durationFormatted || 'Calculando...'} 🔨`
+                    text: `Total: ${tracks.length} canciones | ${queue.durationFormatted || 'calculando...'} restantes`
                 })
                 .setTimestamp();
 
-            return interaction.reply({ embeds: [queueEmbed], flags: MessageFlags.Ephemeral });
+            // Botones de paginación — solo se muestran si hay más de una página
+            const componentes = [];
+            if (totalPaginas > 1) {
+                const filaPaginacion = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`musica_queue_page_${paginaActual - 1}`)
+                        .setEmoji('◀️')
+                        .setLabel('Anterior')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(paginaActual === 0),
+                    new ButtonBuilder()
+                        .setCustomId(`musica_queue_page_${paginaActual + 1}`)
+                        .setEmoji('▶️')
+                        .setLabel('Siguiente')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(paginaActual >= totalPaginas - 1)
+                );
+                componentes.push(filaPaginacion);
+            }
+
+            // Paginación: deferUpdate() + editReply() en lugar de update().
+            // interaction.update() solo funciona en mensajes normales, NO en efímeros.
+            // deferUpdate() le dice a Discord "recibí el clic" sin responder todavía,
+            // y luego editReply() actualiza el mensaje efímero con el nuevo contenido.
+            if (interaction.customId.startsWith('musica_queue_page_')) {
+                await interaction.deferUpdate();
+                return interaction.editReply({ embeds: [queueEmbed], components: componentes });
+            }
+            return interaction.reply({ embeds: [queueEmbed], components: componentes, flags: MessageFlags.Ephemeral });
         }
 
         // ── 🎤 VER LETRAS ──

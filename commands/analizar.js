@@ -1,66 +1,125 @@
-// commands/analizar.js — Reporte Forense Belka v6.0
+// commands/analizar.js — Reporte Forense Belka v7.0
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { dominiosSeguros, escanearEnlace } = require('../utils/linkGuard');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('analizar')
-        .setDescription('Realiza un escaneo forense multinivel (VT + Google + IPQS + Hybrid Analysis + Visual).')
-        .addStringOption(option => 
+        .setDescription('Escaneo multinivel: URLhaus + Google + VirusTotal + IPQS + Visual.')
+        .addStringOption(option =>
             option.setName('url')
-            .setDescription('La URL o link sospechoso a examinar')
-            .setRequired(true)),
+                .setDescription('La URL o link sospechoso a examinar')
+                .setRequired(true)
+        ),
 
     async execute(interaction) {
         const url = interaction.options.getString('url');
-        
-        try {
-            // 1. Verificación de Whitelist Refinada
-            const urlObj = new URL(url);
-            const hostname = urlObj.hostname.replace('www.', '');
 
-            if (dominiosSeguros.some(dominio => hostname.endsWith(dominio))) {
-                return interaction.reply({ 
-                    content: `✅ **${hostname}** es un dominio de confianza registrado en la Whitelist. No requiere análisis forense.`, 
-                    flags: MessageFlags.Ephemeral 
-                });
-            }
-        } catch (e) {
-            return interaction.reply({ 
-                content: '❌ URL malformada. Asegúrate de que el enlace sea válido e incluya el protocolo (http/https).', 
-                flags: MessageFlags.Ephemeral 
+        // ── 1. Validar formato de URL ──────────────────────────────────────
+        let urlObj;
+        try {
+            urlObj = new URL(url);
+        } catch {
+            return interaction.reply({
+                content: '❌ URL malformada. Asegúrate de que el enlace sea válido e incluya el protocolo (http/https).',
+                flags: MessageFlags.Ephemeral
+            });
+        }
+
+        // ── 2. Verificar Whitelist ─────────────────────────────────────────
+        const hostname = urlObj.hostname.replace('www.', '');
+        if (dominiosSeguros.some(d => hostname.endsWith(d))) {
+            return interaction.reply({
+                content: `✅ **${hostname}** es un dominio registrado en la Whitelist de confianza. No requiere análisis forense.`,
+                flags: MessageFlags.Ephemeral
             });
         }
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
-            // 2. Ejecución del motor centralizado
+            // ── 3. Ejecutar motor de análisis ──────────────────────────────
             const reporte = await escanearEnlace(url);
-            const { hibrido, visual, ruta, resultados } = reporte;
-            const { statsVT, resIPQS, esPhishingGoogle } = resultados;
+            const { visual, ruta, resultados } = reporte;
+            const { statsVT, resIPQS, esPhishingGoogle, resHaus, scoreCompuesto } = resultados;
 
-            // Generamos el ID de VirusTotal para el enlace final
+            // ID de VirusTotal para enlace directo al reporte
             const urlIdVT = Buffer.from(reporte.cleanUrl).toString('base64').replace(/=/g, '');
+            const urlVT   = `https://www.virustotal.com/gui/url/${urlIdVT}`;
 
-            // 3. Construcción del Panel Forense
+            // ── 4. Color e icono según nivel de riesgo ─────────────────────
+            const colores = { CRÍTICO: '#ED4245', ALTO: '#FFA500', MEDIO: '#FEE75C', BAJO: '#57F287' };
+            const iconos  = {
+                CRÍTICO: 'https://cdn-icons-png.flaticon.com/512/753/753345.png',
+                ALTO:    'https://cdn-icons-png.flaticon.com/512/1680/1680012.png',
+                MEDIO:   'https://cdn-icons-png.flaticon.com/512/1680/1680012.png',
+                BAJO:    'https://cdn-icons-png.flaticon.com/512/845/845646.png'
+            };
+            const nivelKey = reporte.nivel || 'BAJO';
+
+            // ── 5. Construir embed forense ─────────────────────────────────
             const embed = new EmbedBuilder()
-                .setTitle('🔬 Informe Forense de Seguridad Multinivel')
-                .setURL(visual ? visual.reporte : `https://www.virustotal.com/gui/url/${urlIdVT}`)
-                .setColor(reporte.detectado ? '#ED4245' : '#57F287')
-                .setThumbnail(reporte.detectado 
-                    ? 'https://cdn-icons-png.flaticon.com/512/753/753345.png' 
-                    : 'https://cdn-icons-png.flaticon.com/512/845/845646.png')
+                .setTitle('🔬 Informe Forense de Seguridad Multinivel.')
+                .setURL(visual?.reporte ?? urlVT)
+                .setColor(colores[nivelKey] ?? '#57F287')
+                .setThumbnail(iconos[nivelKey] ?? iconos.BAJO)
                 .addFields(
-                    { name: '🛤️ Ruta de Redirección', value: ruta.map(r => `↪️ \`${new URL(r).hostname}\``).join('\n'), inline: false },
-                    { name: '🔬 Hybrid Analysis', value: hibrido ? `**${hibrido.verdict.toUpperCase()}**` : '⚪ No disponible', inline: true },
-                    { name: '🛑 Google Safe Browsing', value: esPhishingGoogle ? '🚨 Phishing' : '✅ Limpio', inline: true },
-                    { name: '📸 urlscan.io (Visual)', value: visual ? `[Ver Captura](${visual.reporte})` : '⚪ Sin datos', inline: true },
-                    { name: '🛡️ VirusTotal', value: statsVT ? `🚨 Maliciosos: ${statsVT.malicious}` : '⚪ Sin datos', inline: true },
-                    { name: '📊 IPQualityScore', value: `🚩 Riesgo: ${resIPQS?.risk_score || 0}/100`, inline: true },
-                    { name: '🔗 URL Desenmascarada', value: `\`${reporte.cleanUrl.substring(0, 1000)}\``, inline: false }
+                    // Fila 1: Score compuesto — el veredicto más importante, ancho completo
+                    {
+                        name: '⚠️ Score de Riesgo Compuesto',
+                        value: scoreCompuesto
+                            ? `${scoreCompuesto.emoji} **${scoreCompuesto.score}/100** — Nivel: **${scoreCompuesto.nivel}**\n${reporte.detectado ? `🚩 Motivo: \`${reporte.motivo}\`` : '✅ Sin amenazas confirmadas'}`
+                            : '⚪ No calculado',
+                        inline: false
+                    },
+                    // Fila 2: 3 fuentes principales en inline (alineadas en una sola fila)
+                    {
+                        name: '🛑 Google Safe Browsing',
+                        value: esPhishingGoogle ? '🚨 Phishing/Engaño' : '✅ Limpio',
+                        inline: true
+                    },
+                    {
+                        name: '🛡️ VirusTotal',
+                        value: statsVT
+                            ? `🚨 Maliciosos: **${statsVT.malicious}**\n⚠️ Sospechosos: **${statsVT.suspicious}**`
+                            : '⚪ Sin datos',
+                        inline: true
+                    },
+                    {
+                        name: '📊 IPQualityScore',
+                        value: resIPQS
+                            ? `🚩 **${resIPQS.risk_score ?? 0}/100**\nPhishing: ${resIPQS.phishing ? '🚨' : '✅'} | Malware: ${resIPQS.malware ? '🚨' : '✅'}`
+                            : '⚪ Sin datos',
+                        inline: true
+                    },
+                    // Fila 3: URLhaus + Visual (2 inline = fila limpia)
+                    {
+                        name: '🦠 URLhaus',
+                        value: resHaus?.query_status === 'ok'
+                            ? (resHaus.url_status === 'online' ? '🚨 Malware activo' : `⚠️ Registrado (${resHaus.url_status})`)
+                            : '✅ No encontrado',
+                        inline: true
+                    },
+                    {
+                        name: '📸 urlscan.io',
+                        value: visual ? `[Ver Captura Visual](${visual.reporte})` : '⚪ Sin datos',
+                        inline: true
+                    },
+                    // Fila 4: Ruta de redirección (ancho completo)
+                    {
+                        name: '🛤️ Ruta de Redirección',
+                        value: ruta.map(r => `↪️ \`${new URL(r).hostname}\``).join('\n') || '—',
+                        inline: false
+                    },
+                    // Fila 5: URL limpia analizada (ancho completo)
+                    {
+                        name: '🔗 URL Analizada',
+                        value: `\`${reporte.cleanUrl.substring(0, 1000)}\``,
+                        inline: false
+                    }
                 )
-                .setFooter({ text: 'Graf Eisen Shield — Protocolo Forense Activo v6.0' })
+                .setFooter({ text: 'Graf Eisen Shield — Protocolo Antimalware Activo v7.0. Si no estas seguro sobre la seguridad de un enlace, examinalo en https://tria.ge/dashboard antes de compartirlo.'
+                })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });

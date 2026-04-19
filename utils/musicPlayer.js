@@ -1,6 +1,6 @@
 // utils/musicPlayer.js — VitaBot
 // Motor de audio: extractor personalizado, streaming Hi-Fi y eventos del reproductor
-const path = require('path'); // Asegúrate de importar path
+const path = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { Player, BaseExtractor, Track, Playlist } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
@@ -17,7 +17,6 @@ const { log, sanitizeErrorMessage } = require('./logger');
 // ─────────────────────────────────────────────
 let youtubeCookie = '';
 try {
-    // Apuntamos a la nueva carpeta config/
     const cookiePath = path.join(__dirname, '../config/youtube-cookie.json');
     youtubeCookie = fs.readFileSync(cookiePath, 'utf-8').trim().replace(/^"|"$/g, '');
     console.log('» | [Music] Cookie de YouTube cargada desde /config.');
@@ -26,12 +25,40 @@ try {
 }
 
 // ─────────────────────────────────────────────
+// CACHE DE URLs DE AUDIO
+// Cacheamos la URL del audio extraída por yt-dlp, NO el stream.
+// Las URLs de YouTube expiran ~6h; usamos 12min para máxima seguridad.
+//
+// ⚠️ LIMPIEZA AUTOMÁTICA cada 5 min para evitar memory leak silencioso:
+//    sin esto, el Map crece indefinidamente en sesiones largas.
+// ─────────────────────────────────────────────
+const audioUrlCache = new Map();
+const CACHE_TTL = 1000 * 60 * 12; // 12 minutos
+
+setInterval(() => {
+    const now = Date.now();
+    let eliminadas = 0;
+    for (const [key, value] of audioUrlCache.entries()) {
+        if (now - value.timestamp > CACHE_TTL) {
+            audioUrlCache.delete(key);
+            eliminadas++;
+        }
+    }
+    if (eliminadas > 0) console.log(`[CACHE] 🧹 ${eliminadas} URL(s) expiradas eliminadas.`);
+}, 1000 * 60 * 5).unref(); // .unref() para que no bloquee el cierre del proceso
+
+// ─────────────────────────────────────────────
 // UTILIDADES
 // ─────────────────────────────────────────────
 
 /**
- * Limpia y valida una URL de YouTube para evitar errores con FFmpeg y yt-dlp.
- * Solo permite dominios oficiales y extrae el ID del video correctamente.
+ * Limpia y valida una URL de YouTube.
+ * Soporta todos los formatos conocidos:
+ *   - youtube.com/watch?v=ID
+ *   - youtu.be/ID
+ *   - youtube.com/live/ID      ← streams en vivo
+ *   - youtube.com/shorts/ID    ← shorts
+ *   - parámetros extra como ?si= son ignorados (solo conserva el ID)
  */
 function cleanYoutubeUrl(url) {
     try {
@@ -39,13 +66,22 @@ function cleanYoutubeUrl(url) {
         const dominiosSeguros = ['youtube.com', 'youtu.be', 'music.youtube.com', 'googleusercontent.com'];
         if (!dominiosSeguros.some(d => u.hostname.endsWith(d))) return null;
 
+        // Formato estándar: ?v=ID
         let videoId = u.searchParams.get('v');
+
+        // youtu.be/ID
         if (!videoId && u.hostname === 'youtu.be') {
             videoId = u.pathname.slice(1).split(/[?#]/)[0];
         }
 
+        // /live/ID y /shorts/ID
+        if (!videoId) {
+            const match = u.pathname.match(/\/(?:live|shorts)\/([a-zA-Z0-9_-]{11})/);
+            if (match) videoId = match[1];
+        }
+
         return videoId ? `https://www.youtube.com/watch?v=${videoId}` : null;
-    } catch (e) {
+    } catch {
         return null;
     }
 }
@@ -61,8 +97,7 @@ function secondsToTime(secs) {
 }
 
 /**
- * Limpia el título de una canción para búsquedas en Genius,
- * eliminando tags de marketing y paréntesis innecesarios.
+ * Limpia el título de una canción para búsquedas en Genius.
  */
 function limpiarParaLyrics(texto, autor) {
     if (!texto) return '';
@@ -99,6 +134,27 @@ function limpiarParaLyrics(texto, autor) {
 }
 
 // ─────────────────────────────────────────────
+// HELPER: Construir un Track desde datos de video
+// ─────────────────────────────────────────────
+function buildTrack(player, data, context, extractor) {
+    const track = new Track(player, {
+        title: data.title,
+        url: data.url,
+        duration: data.duration || '0:00',
+        thumbnail: data.thumbnail || '',
+        author: data.author || 'Desconocido',
+        requestedBy: context.requestedBy,
+        source: data.source || 'youtube',
+        queryType: data.queryType || context.type,
+        description: data.description || '',
+        views: data.views || 0,
+        live: data.live || false,
+    });
+    track.extractor = extractor;
+    return track;
+}
+
+// ─────────────────────────────────────────────
 // EXTRACTOR PERSONALIZADO
 // ─────────────────────────────────────────────
 
@@ -106,10 +162,13 @@ class YoutubeExtExtractor extends BaseExtractor {
     static identifier = 'com.vitabot.youtube-ext';
 
     async validate(query, type) {
-        if (query.startsWith('http') &&
+        // Rechaza URLs que no sean de YouTube ni Spotify
+        if (
+            query.startsWith('http') &&
             !query.includes('youtube.com') &&
             !query.includes('youtu.be') &&
-            !query.includes('spotify.com')) {
+            !query.includes('spotify.com')
+        ) {
             return false;
         }
         return true;
@@ -117,12 +176,46 @@ class YoutubeExtExtractor extends BaseExtractor {
 
     async handle(query, context) {
         try {
-            // ------ SOPORTE PLAYLISTS DE YOUTUBE Soporte de Playlists con Triple Redundancia------
+            // ══════════════════════════════════════════
+            // 1. SOPORTE SPOTIFY (primero, antes de los returns de YouTube)
+            // ══════════════════════════════════════════
+            if (query.includes('spotify.com/track/')) {
+                console.log('[Spotify] 🎵 Track de Spotify detectado.');
+                const trackId = query.match(/track\/([a-zA-Z0-9]+)/)?.[1];
+                if (!trackId) return { playlist: null, tracks: [] };
+
+                const oembedRes = await fetch(`https://open.spotify.com/oembed?url=spotify:track:${trackId}`);
+                if (!oembedRes.ok) throw new Error('Spotify oEmbed falló');
+                const oembed = await oembedRes.json();
+
+                const results = await youtubeExt.search(oembed.title, { type: 'video', limit: 1 });
+                if (!results?.videos?.length) return { playlist: null, tracks: [] };
+
+                const video = results.videos[0];
+                const videoUrl = cleanYoutubeUrl(video.url);
+                if (!videoUrl) return { playlist: null, tracks: [] };
+
+                const track = buildTrack(this.context.player, {
+                    title: oembed.title || video.title,
+                    url: videoUrl,
+                    duration: video.duration?.text || '0:00',
+                    thumbnail: oembed.thumbnail_url || video.thumbnails?.[0]?.url || '',
+                    author: video.channel?.name || 'Desconocido',
+                    source: 'spotify',
+                }, context, this);
+
+                console.log(`[Spotify] ✅ Track resuelto: ${track.title}`);
+                return { playlist: null, tracks: [track] };
+            }
+
+            // ══════════════════════════════════════════
+            // 2. SOPORTE PLAYLISTS DE YOUTUBE (con doble redundancia)
+            // ══════════════════════════════════════════
             if (query.includes('list=')) {
-                console.log(`[DATA-SCAN] 🔍 Detectada posible playlist. Iniciando rastreo...`);
+                console.log('[DATA-SCAN] 🔍 Detectada posible playlist. Iniciando rastreo...');
                 let playlistData = null;
 
-                // NIVEL 1: YT-DLP
+                // NIVEL 1: yt-dlp (más rápido y completo)
                 try {
                     const output = await youtubedl(query, {
                         dumpSingleJson: true,
@@ -132,12 +225,12 @@ class YoutubeExtExtractor extends BaseExtractor {
                         noWarnings: true
                     }, { windowsHide: true, maxBuffer: 1024 * 1024 * 100 });
 
-                    let json = (typeof output === 'string') ? JSON.parse(output) : output;
+                    const json = (typeof output === 'string') ? JSON.parse(output) : output;
 
                     if (json && (json.entries || json.videos)) {
                         const entries = json.entries || json.videos;
                         console.log(`[DATA-SCAN] yt-dlp devolvió ${entries.length} entradas crudas.`);
-                        
+
                         playlistData = {
                             title: json.title || 'Playlist de YouTube',
                             author: json.uploader || 'YouTube',
@@ -155,41 +248,36 @@ class YoutubeExtExtractor extends BaseExtractor {
                     console.warn(`[DEBUG-FAIL] Motor yt-dlp: ${e.message}`);
                 }
 
-                // NIVEL 2: FALLBACK
+                // NIVEL 2: Fallback con youtube-ext
                 if (!playlistData) {
-                    console.log(`[DATA-SCAN] Reintentando con youtube-ext...`);
+                    console.log('[DATA-SCAN] Reintentando con youtube-ext...');
                     playlistData = await youtubeExt.playlistInfo(query, {
                         requestOptions: { headers: { cookie: youtubeCookie } }
                     }).catch(() => null);
                 }
 
-                // PROCESAMIENTO FINAL
+                // PROCESAMIENTO FINAL DE PLAYLIST
                 if (playlistData && playlistData.videos?.length > 0) {
-                    const MAX_TRACKS = 200; 
+                    const MAX_TRACKS = 200;
                     if (playlistData.videos.length > MAX_TRACKS) {
-                        console.log(`[YoutubeExt] ⚠️ Playlist de ${playlistData.videos.length} pistas detectada. Limitando a ${MAX_TRACKS} por seguridad.`);
+                        console.log(`[YoutubeExt] ⚠️ Playlist de ${playlistData.videos.length} pistas. Limitando a ${MAX_TRACKS}.`);
                         playlistData.videos = playlistData.videos.slice(0, MAX_TRACKS);
                     }
-                    console.log(`[DEBUG] Preparando inyección de tracks para: ${playlistData.title}`);
-                    
+
                     const tracks = playlistData.videos
                         .filter(v => v && v.title && v.url)
                         .map((video, index) => {
-                            const track = new Track(this.context.player, {
+                            const track = buildTrack(this.context.player, {
                                 title: video.title,
                                 url: video.url,
                                 duration: typeof video.duration === 'string' ? video.duration : '0:00',
                                 thumbnail: video.thumbnail || video.thumbnails?.[0]?.url || '',
                                 author: video.author || 'YouTube Playlist',
-                                requestedBy: context.requestedBy,
                                 source: 'youtube',
-                                queryType: 'youtubePlaylist' 
-                            });
-                            track.extractor = this;
-                            
-                            // Log de cada 10 pistas para no saturar pero confirmar flujo
+                                queryType: 'youtubePlaylist',
+                            }, context, this);
+
                             if (index % 10 === 0) console.log(`[TRACK-CHECK] Pista ${index}: ${track.title} [VÁLIDA]`);
-                            
                             return track;
                         });
 
@@ -198,187 +286,260 @@ class YoutubeExtExtractor extends BaseExtractor {
                         url: query,
                         thumbnail: playlistData.thumbnail || '',
                         author: { name: playlistData.author || 'YouTube', url: '' },
-                        tracks: tracks,
+                        tracks,
                         source: 'youtube',
                         type: 'playlist'
                     });
 
-                    // LOG FINAL ANTES DEL RETURN
-                    console.log(`[FINAL-RESULT] Objeto Playlist creado: ${playlist.title}`);
-                    console.log(`[FINAL-RESULT] Array de Tracks (length): ${tracks.length}`);
-                    console.log(`[FINAL-RESULT] ¿requestedBy existe?: ${context.requestedBy ? 'SÍ' : 'NO'}`);
-
+                    console.log(`[FINAL-RESULT] Playlist: "${playlist.title}" | Tracks: ${tracks.length} | requestedBy: ${context.requestedBy ? 'SÍ' : 'NO'}`);
                     return { playlist, tracks };
+
                 } else {
-                    console.error(`[DEBUG-EMPTY] No se encontraron videos procesables en la lista.`);
+                    console.error('[DEBUG-EMPTY] No se encontraron videos procesables en la playlist.');
+                    return { playlist: null, tracks: [] };
                 }
             }
-            
-            // ------ SOPORTE YOUTUBE Y BÚSQUEDA POR NOMBRE ------
-            let videoUrl;
 
+            // ══════════════════════════════════════════
+            // 3. LINK DIRECTO DE YOUTUBE
+            // ══════════════════════════════════════════
             if (query.includes('youtube.com') || query.includes('youtu.be')) {
-                videoUrl = cleanYoutubeUrl(query);
-                console.log(`[YoutubeExt] 🔗 Link directo detectado: ${videoUrl}`);
-            } else {
-                const searchQuery = query.includes('music') ? query : `${query} music topic`;
-                const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 10 });
-                if (!results?.videos?.length) return { playlist: null, tracks: [] };
+                const videoUrl = cleanYoutubeUrl(query);
+                if (!videoUrl) return { playlist: null, tracks: [] };
+                console.log(`[YoutubeExt] 🔗 Link directo: ${videoUrl}`);
 
-                console.log(`[YoutubeExt] 🔍 Búsqueda: "${searchQuery}" | Resultados devueltos: ${results?.length || 10}`);
-
-                const tracks = results.videos.map(video => {
-                    const track = new Track(this.context.player, {
-                        title: video.title,
-                        url: cleanYoutubeUrl(video.url),
-                        duration: video.duration?.text || '0:00',
-                        thumbnail: video.thumbnails?.[0]?.url || '',
-                        author: video.channel?.name || 'YouTube Music',
-                        requestedBy: context.requestedBy,
-                        source: 'youtube',
-                        queryType: context.type
-                    });
-                    track.extractor = this;
-                    return track;
+                const info = await youtubeExt.videoInfo(videoUrl, {
+                    requestOptions: { headers: { cookie: youtubeCookie } }
                 });
 
-                return { playlist: null, tracks };
+                if (!info?.title) return { playlist: null, tracks: [] };
+
+                const track = buildTrack(this.context.player, {
+                    title: info.title,
+                    url: videoUrl,
+                    duration: secondsToTime(info.duration?.lengthSec),
+                    thumbnail: info.thumbnails?.[0]?.url || '',
+                    author: info.channel?.name || 'Desconocido',
+                    source: 'youtube',
+                    description: info.shortDescription || '',
+                    views: info.views?.pretty || 0,
+                    live: info.isLive || false,
+                }, context, this);
+
+                return { playlist: null, tracks: [track] };
             }
 
-            const info = await youtubeExt.videoInfo(videoUrl, {
-                requestOptions: { headers: { cookie: youtubeCookie } }
-            });
+            // ══════════════════════════════════════════
+            // 4. BÚSQUEDA POR NOMBRE / TEXTO LIBRE
+            // ══════════════════════════════════════════
+            const searchQuery = query.includes('music') ? query : `${query} music topic`;
+            console.log(`[YoutubeExt] 🔍 Búsqueda: "${searchQuery}"`);
 
-            if (!info?.title) return { playlist: null, tracks: [] };
+            const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 10 });
+            if (!results?.videos?.length) return { playlist: null, tracks: [] };
 
-            const track = new Track(this.context.player, {
-                title: info.title || 'Sin título',
-                url: videoUrl,
-                duration: secondsToTime(info.duration?.lengthSec),
-                thumbnail: info.thumbnails?.[0]?.url || '',
-                author: info.channel?.name || 'Desconocido',
-                requestedBy: context.requestedBy,
-                source: 'youtube',
-                queryType: context.type,
-                description: info.shortDescription || '',
-                views: info.views?.pretty || 0,
-                live: info.isLive || false
-            });
+            const tracks = results.videos
+                .filter(v => v && v.url)
+                .map(video => buildTrack(this.context.player, {
+                    title: video.title,
+                    url: cleanYoutubeUrl(video.url),
+                    duration: video.duration?.text || '0:00',
+                    thumbnail: video.thumbnails?.[0]?.url || '',
+                    author: video.channel?.name || 'YouTube Music',
+                    source: 'youtube',
+                }, context, this));
 
-            track.extractor = this;
-            return { playlist: null, tracks: [track] };
+            return { playlist: null, tracks };
 
         } catch (e) {
-            if (e.message.includes('Unexpected non-whitespace character') || e instanceof SyntaxError) {
-                console.warn('[YoutubeExt] Error de parseo. Activando motores de respaldo...');
+            if (e.message?.includes('Unexpected non-whitespace character') || e instanceof SyntaxError) {
+                console.warn('[YoutubeExt] Error de parseo JSON en handle.');
             } else {
                 console.error('[YoutubeExt handle] ERROR:', e.message);
             }
             return { playlist: null, tracks: [] };
         }
-
-        // ------ SOPORTE SPOTIFY ------
-            if (query.includes('spotify.com/track/')) {
-                const trackId = query.match(/track\/([a-zA-Z0-9]+)/)?.[1];
-                if (!trackId) return { playlist: null, tracks: [] };
-
-                const oembedRes = await fetch(`https://open.spotify.com/oembed?url=spotify:track:${trackId}`);
-                const oembed = await oembedRes.json();
-
-                const results = await youtubeExt.search(oembed.title, { type: 'video', limit: 1 });
-                if (!results?.videos?.length) return { playlist: null, tracks: [] };
-
-                const video = results.videos[0];
-                const videoUrl = cleanYoutubeUrl(video.url);
-
-                const track = new Track(this.context.player, {
-                    title: oembed.title || video.title,
-                    url: videoUrl,
-                    duration: video.duration?.text || '0:00',
-                    thumbnail: oembed.thumbnail_url || video.thumbnails?.[0]?.url || '',
-                    author: video.channel?.name || 'Desconocido',
-                    requestedBy: context.requestedBy,
-                    source: 'spotify',
-                    queryType: context.type,
-                    description: '',
-                    views: 0,
-                    live: false
-                });
-
-                track.extractor = this;
-                return { playlist: null, tracks: [track] };
-            }
-
     }
 
-    // El método stream se encarga de obtener el audio en formato Opus utilizando yt-dlp y FFmpeg.
-    // utils/musicPlayer.js — Motor v3.9 (Protocolo de Sincronización Real)
+    // ─────────────────────────────────────────────
+    // STREAM — Motor Hi-Fi v4.0 (Híbrido M1+M2)
+    //
+    // Lógica:
+    //   1. Obtiene bitrate real del canal de voz (dinámico, del M1).
+    //   2. Inspecciona formatos con yt-dlp para detectar si el audio
+    //      ya viene en Opus/WebM nativo → usa -c:a copy (sin pérdida,
+    //      sin gasto de CPU). Si no, re-encodea con el bitrate del canal.
+    //   3. Cachea la URL del audio (no el stream) para evitar llamadas
+    //      repetidas a yt-dlp en la misma pista.
+    //   4. Timeout de protección para que FFmpeg no quede zombie.
+    // ─────────────────────────────────────────────
     async stream(track) {
         try {
             const cleanUrl = cleanYoutubeUrl(track.url);
             if (!cleanUrl) throw new Error('URL no permitida o malformada');
 
-            // 1. DETECCIÓN DE BITRATE (Sincronización de Fuerza Bruta)
-            let channelBitrate = 96; 
+            // ── 1. BITRATE DINÁMICO DEL CANAL DE VOZ ──────────────────────
+            let channelBitrate = 96;
             try {
-                // Buscamos el ID del servidor en la metadata que enviamos desde play.js
                 const guildId = track.metadata?.guildId || track.queue?.metadata?.guildId;
                 const guild = this.context.player.client.guilds.cache.get(guildId);
-                
-                // Obtenemos el ID del canal de voz donde está el bot actualmente
                 const voiceChannelId = guild?.members.me?.voice.channelId;
-                
+
                 if (voiceChannelId) {
-                    // FORZAMOS FETCH AL CANAL: Esto obliga a Discord a dar el valor real y no el de caché
+                    // force: true para evitar caché de Discord y obtener el valor real
                     const freshChannel = await this.context.player.client.channels.fetch(voiceChannelId, { force: true });
-                    if (freshChannel && freshChannel.bitrate) {
-                        channelBitrate = freshChannel.bitrate / 1000;
-                    }
+                    if (freshChannel?.bitrate) channelBitrate = freshChannel.bitrate / 1000;
                 }
-            } catch (err) {
-                console.warn('[Audio-Engine] Error al sincronizar bitrate, usando fallback 96k.');
+            } catch {
+                console.warn('[Audio-Engine] Error al leer bitrate del canal → fallback 96k');
             }
-            
-            // El objetivo siempre será el mínimo entre el canal y nuestro tope de 256k
-            const targetBitrate = Math.min(channelBitrate, 384); 
 
-            // 2. FILTROS Y OBTENCIÓN DE URL
-            const filters = ['loudnorm=I=-16:TP=-1.5:LRA=11', 'aresample=48000'].join(',');
-            
-            const audioUrl = (await youtubedl(cleanUrl, {
-                format: 'bestaudio', getUrl: true, noCheckCertificates: true, noWarnings: true,
-            }, { windowsHide: true })).trim();
+            // Bitrate inteligente por rangos según el canal real:
+            //   < 96k   → probable canal básico, limitamos a 96k
+            //   96–256k → sweet spot Discord, usamos el canal tal cual
+            //   > 256k  → canal boosteado, subimos hasta 256k (máximo perceptible en Opus)
+            // No usamos 320k porque Opus no mejora perceptiblemente sobre 256k para voz/música.
+            const targetBitrate = channelBitrate <= 96  ? 96
+                                : channelBitrate <= 256 ? channelBitrate
+                                : 256;
 
-            // 3. FFMPEG REFORZADO (Sin buffer_size problemático, con Anti-Reset)
-            const ffmpegProcess = spawn(ffmpegPath, [
-                '-reconnect', '1',
-                '-reconnect_at_eof', '1',
-                '-reconnect_streamed', '1',
+            // ── 2. OBTENER URL DE AUDIO (con cache de URL, no de stream) ──
+            let audioUrl, isOpusCopy;
+            const cached = audioUrlCache.get(cleanUrl);
+
+            if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+                console.log('[CACHE] ✅ Usando URL de audio cacheada');
+                ({ audioUrl, isOpusCopy } = cached);
+            } else {
+                // Inspeccionar formatos para decidir si podemos hacer copy
+                const info = await youtubedl(cleanUrl, {
+                    dumpSingleJson: true,
+                    noWarnings: true,
+                    noCheckCertificates: true,
+                    preferFreeFormats: true,
+                }, { windowsHide: true });
+
+                const formats = (info.formats || []).filter(f => f.acodec !== 'none' && f.url);
+                if (!formats.length) throw new Error('No se encontró ningún formato de audio');
+
+                // Prioridad: mejor opus/webm nativo (copy sin pérdida) > mayor bitrate disponible.
+                // Usamos sort() y no find() para garantizar que tomamos el de MAYOR bitrate entre
+                // los opus disponibles, no simplemente el primero que aparezca en la lista.
+                const opusWebm = formats
+                    .filter(f => f.acodec?.includes('opus') && f.ext === 'webm')
+                    .sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
+
+                const bestAudio = opusWebm || formats.sort((a, b) => (b.abr || 0) - (a.abr || 0))[0];
+
+                audioUrl    = bestAudio.url;
+                isOpusCopy  = !!opusWebm;
+
+                audioUrlCache.set(cleanUrl, { audioUrl, isOpusCopy, timestamp: Date.now() });
+            }
+
+            // ── 3. CONSTRUIR ARGUMENTOS DE FFMPEG ─────────────────────────
+            // ⚠️ NOTA: loudnorm ELIMINADO intencionalmente.
+            //   loudnorm necesita 2 pasadas para funcionar correctamente.
+            //   En modo de un solo pase (streaming) introduce distorsión audible
+            //   — el "ruido de vinilo / estática" que se escucha. En su lugar
+            //   usamos dynaudnorm que sí opera bien en tiempo real.
+            //
+            // ⚠️ NOTA: -reconnect_at_eof ELIMINADO para audio normal.
+            //   Cuando una canción termina, el stream HTTP cierra limpiamente.
+            //   Con reconnect_at_eof, FFmpeg interpreta ese cierre como un error
+            //   y genera los mensajes -10054 que ves en el log. Solo se activa
+            //   para streams en vivo donde sí tiene sentido.
+            const esLive = track.live || false;
+
+            const args = [
+                '-reconnect',           '1',
+                '-reconnect_streamed',  '1',
                 '-reconnect_delay_max', '10',
-                '-probesize', '4M',
-                '-analyzeduration', '4M',
-                '-loglevel', 'error',
-                '-i', audioUrl,
+                // reconnect_at_eof solo en vivos — en audio pregrabado causa falsos errores -10054
+                ...(esLive ? ['-reconnect_at_eof', '1'] : []),
+                '-probesize',           '4M',
+                '-analyzeduration',     '4M',
+                '-loglevel',            'error',
+                '-i',                   audioUrl,
                 '-vn',
-                '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
-                '-c:a', 'libopus',
-                '-ar', '48000',
-                '-ac', '2',
-                '-b:a', `${targetBitrate}k`,
-                '-f', 'opus',
-                'pipe:1'
-            ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+            ];
 
-            // Monitor de integridad para el registro de auditoría
+            if (isOpusCopy) {
+                // Audio opus nativo: copia directa, cero re-encoding, cero pérdida
+                args.push('-c:a', 'copy', '-f', 'opus');
+                console.log(`[Audio-Engine] ✅ COPY opus nativo | Canal: ${channelBitrate}kbps | Live: ${esLive}`);
+            } else {
+                // dynaudnorm: normalización de volumen en tiempo real sin distorsión
+                // f=150: ventana de 150ms — equilibrio entre reactividad y estabilidad
+                // g=15:  suavizado de 15 frames — evita cambios bruscos de volumen
+                // p=0.95: pico máximo al 95% para no saturar
+                args.push(
+                    '-af',  'dynaudnorm=f=150:g=15:p=0.95',
+                    '-c:a', 'libopus',
+                    '-ar',  '48000',
+                    '-ac',  '2',
+                    '-b:a', `${targetBitrate}k`,
+                    '-f',   'opus'
+                );
+                console.log(`[Audio-Engine] 🔄 ENCODE ${targetBitrate}kbps | Canal: ${channelBitrate}kbps | Live: ${esLive}`);
+            }
+
+            args.push('pipe:1');
+
+            // ── 4. SPAWN FFMPEG ────────────────────────────────────────────
+            const ffmpegProcess = spawn(ffmpegPath, args, {
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+            });
+
             ffmpegProcess.stderr.on('data', (data) => {
-                if (data.toString().includes('10054')) {
-                    console.error('[FFmpeg-Shield] Reset de conexión (Error -10054). Re-sincronizando flujo...');
+                const msg = data.toString();
+                // Errores de I/O al final de pista son normales (stream HTTP cerrado limpiamente).
+                // Solo logueamos si NO son errores esperados de fin de stream.
+                const esErrorNormal = msg.includes('I/O error') || msg.includes('End of file');
+                if (msg.includes('10054') && !esLive) {
+                    // En audio normal este error es falso — el stream terminó limpiamente
+                    // Solo lo logueamos en modo debug, no como error crítico
+                    console.debug('[FFmpeg] Fin de stream detectado (normal en audio pregrabado)');
+                } else if (msg.includes('10054') && esLive) {
+                    console.error('[FFmpeg-Shield] Reset de conexión en live (-10054). Re-sincronizando...');
+                } else if (msg.includes('error') && !esErrorNormal) {
+                    console.error('[FFmpeg]', msg.trim());
                 }
             });
 
-            console.log(`[Audio-Engine] 🚀 Stream blindado: ${targetBitrate}kbps | Canal Real: ${channelBitrate}kbps`);
+            ffmpegProcess.on('close', (code) => {
+                if (code !== 0 && code !== null) {
+                    if (isOpusCopy) {
+                        // Copy falló (stream Opus corrupto o contenedor incompatible).
+                        // Marcamos la entrada del cache para que la próxima reproducción
+                        // use encode en lugar de copy, evitando el error recurrente.
+                        const entry = audioUrlCache.get(cleanUrl);
+                        if (entry) {
+                            audioUrlCache.set(cleanUrl, { ...entry, isOpusCopy: false });
+                            console.warn('[Audio-Engine] ⚠️ Copy falló → cache actualizado a encode para próxima vez');
+                        }
+                    }
+                    console.warn(`[FFmpeg] Proceso terminó con código ${code}`);
+                }
+            });
 
-            return { stream: ffmpegProcess.stdout, type: StreamType.Opus };
+            // ── 5. TIMEOUT: evita que FFmpeg quede zombie si no arranca ───
+            const timeout = setTimeout(() => {
+                if (!ffmpegProcess.killed) {
+                    console.warn('[FFmpeg] ⚠️ Timeout de arranque (20s) — terminando proceso');
+                    ffmpegProcess.kill('SIGKILL');
+                }
+            }, 20000);
+
+            // Cancelar el timeout en cuanto lleguen los primeros datos
+            ffmpegProcess.stdout.once('data', () => clearTimeout(timeout));
+
+            return {
+                stream:         ffmpegProcess.stdout,
+                type:           StreamType.Opus,
+                highWaterMark:  1 << 25, // 32MB de buffer → reduce micro-cortes
+            };
 
         } catch (e) {
             console.error('[YoutubeExt stream] ERROR CRÍTICO:', e.message);
@@ -404,7 +565,6 @@ class YoutubeExtExtractor extends BaseExtractor {
 function inicializarPlayer(client) {
     const player = new Player(client);
 
-    // Registramos extractores
     (async () => {
         try {
             await player.extractors.register(YoutubeExtExtractor, {});
@@ -415,7 +575,7 @@ function inicializarPlayer(client) {
         }
     })();
 
-    // ── Limpieza de la interfaz de botones al vaciar cola o desconectar ──
+    // ── Limpieza de botones al vaciar cola o desconectar ──────────────────
     const limpiarInterfaz = async (queue) => {
         if (queue.metadata?.ultimoMensaje) {
             await queue.metadata.ultimoMensaje.edit({ components: [] }).catch(() => null);
@@ -423,9 +583,24 @@ function inicializarPlayer(client) {
         }
     };
 
-    // ── playerStart: envía el embed y los botones de control ──
+    // ── playerStart: deshabilita botones anteriores y envía nuevo embed ─────
     player.events.on('playerStart', async (queue, track) => {
         if (track.url.includes('translate_tts')) return;
+
+        // ⚠️ CRÍTICO: deshabilitar botones del mensaje ANTERIOR antes de enviar el nuevo.
+        // Sin esto, los controles de canciones ya reproducidas quedan activos en el chat
+        // (el problema de los botones "zombie" que se ve en la captura).
+        if (queue.metadata?.ultimoMensaje) {
+            const deshabilitado = (btn) => ButtonBuilder.from(btn).setDisabled(true);
+            try {
+                const msgAnterior = queue.metadata.ultimoMensaje;
+                const filasDeshabilitadas = msgAnterior.components.map(fila =>
+                    ActionRowBuilder.from(fila).setComponents(fila.components.map(deshabilitado))
+                );
+                await msgAnterior.edit({ components: filasDeshabilitadas }).catch(() => null);
+            } catch { /* mensaje ya eliminado, ignorar */ }
+            queue.metadata.ultimoMensaje = null;
+        }
 
         const embed = new EmbedBuilder()
             .setTitle('🎵 Reproduciendo Ahora')
@@ -462,8 +637,8 @@ function inicializarPlayer(client) {
         }
     });
 
-    player.events.on('emptyQueue', (queue) => limpiarInterfaz(queue));
-    player.events.on('disconnect', (queue) => limpiarInterfaz(queue));
+    player.events.on('emptyQueue',  (queue) => limpiarInterfaz(queue));
+    player.events.on('disconnect',  (queue) => limpiarInterfaz(queue));
 
     player.events.on('error', (queue, error) => {
         console.error(`[Error de Sistema]: ${error.message}`);

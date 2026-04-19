@@ -111,7 +111,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
     // ── BOTONES DE MÚSICA ──
-    } else if (interaction.isButton() && interaction.customId.startsWith('musica_')) {
+    } else if (interaction.isButton() && (interaction.customId.startsWith('musica_'))) {
         await manejarBotonesMusica(interaction, player);
 
     // ── BOTONES DE ROLES (NUEVO) ──
