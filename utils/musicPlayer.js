@@ -340,7 +340,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             }
             
             // El objetivo siempre será el mínimo entre el canal y nuestro tope de 256k
-            const targetBitrate = Math.min(channelBitrate, 256); 
+            const targetBitrate = Math.min(channelBitrate, 384); 
 
             // 2. FILTROS Y OBTENCIÓN DE URL
             const filters = ['loudnorm=I=-16:TP=-1.5:LRA=11', 'aresample=48000'].join(',');
@@ -351,20 +351,20 @@ class YoutubeExtExtractor extends BaseExtractor {
 
             // 3. FFMPEG REFORZADO (Sin buffer_size problemático, con Anti-Reset)
             const ffmpegProcess = spawn(ffmpegPath, [
-                // Parámetros de red ANTES del input para estabilidad inicial
-                '-reconnect', '1', 
-                '-reconnect_at_eof', '1', 
+                '-reconnect', '1',
+                '-reconnect_at_eof', '1',
                 '-reconnect_streamed', '1',
-                '-reconnect_delay_max', '5',
-                '-rw_timeout', '20000000', // Margen de 20s para estabilidad de red
-                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                '-reconnect_delay_max', '10',
+                '-probesize', '3M',
+                '-analyzeduration', '3M',
+                '-loglevel', 'error',
                 '-i', audioUrl,
-                '-vn', 
-                '-af', filters, 
-                '-c:a', 'libopus', 
-                '-ar', '48000', 
+                '-vn',
+                '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+                '-c:a', 'libopus',
+                '-ar', '48000',
                 '-ac', '2',
-                '-b:a', `${targetBitrate}k`,
+                '-b:a', '256k',
                 '-f', 'opus',
                 'pipe:1'
             ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });

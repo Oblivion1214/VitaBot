@@ -1,6 +1,4 @@
 // index.js — VitaBot
-// Punto de entrada: inicialización, carga de comandos y dispatcher de interacciones
-
 // 1. CARGA DE ENTORNO (siempre lo primero)
 require('dotenv').config();
 
@@ -225,14 +223,13 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// 10. ANTI-CRASH GLOBAL
+// 11. ANTI-CRASH GLOBAL
 process.on('unhandledRejection', (reason) => {
     console.error('[Anti-Crash] Rechazo no manejado:', reason);
 });
-
 process.on('uncaughtException', (err) => {
     console.error('[Anti-Crash] Excepción no capturada:', err);
 });
 
-// 11. LOGIN
+// 12. LOGIN
 client.login(process.env.TOKEN);
