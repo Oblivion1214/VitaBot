@@ -355,8 +355,8 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-reconnect_at_eof', '1',
                 '-reconnect_streamed', '1',
                 '-reconnect_delay_max', '10',
-                '-probesize', '3M',
-                '-analyzeduration', '3M',
+                '-probesize', '4M',
+                '-analyzeduration', '4M',
                 '-loglevel', 'error',
                 '-i', audioUrl,
                 '-vn',
@@ -364,7 +364,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-c:a', 'libopus',
                 '-ar', '48000',
                 '-ac', '2',
-                '-b:a', '256k',
+                '-b:a', `${targetBitrate}k`,
                 '-f', 'opus',
                 'pipe:1'
             ], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
