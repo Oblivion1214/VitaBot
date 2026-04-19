@@ -68,14 +68,21 @@ module.exports = {
 
         // 3. LÓGICA DE MENÚ (Solo si es búsqueda por texto)
         if (!busqueda.startsWith('http')) {
-            const topTracks = resultado.tracks.slice(0, 10); // Máximo 10 para el menú
+            // Filtramos tracks sin URL válida para evitar opciones rotas en el menú
+            const topTracks = resultado.tracks
+                .filter(t => t.url && t.url.startsWith('http'))
+                .slice(0, 10);
+
+            if (!topTracks.length) {
+                return interaction.editReply(`❌ No encontré resultados válidos para: **${busqueda}**.`);
+            }
 
             const menu = new StringSelectMenuBuilder()
                 .setCustomId('musica_select')
                 .setPlaceholder('🎵 Elige la pista correcta para Graf Eisen...')
                 .addOptions(topTracks.map((t, i) => ({
                     label: `${i + 1}. ${t.title.substring(0, 80)}`,
-                    description: `${t.author} | Duración: ${t.duration}`,
+                    description: `${t.author.substring(0, 40)} | Duración: ${t.duration}`,
                     value: t.url,
                 })));
 
@@ -93,9 +100,8 @@ module.exports = {
 
             collector.on('collect', async i => {
                 const trackElegida = topTracks.find(t => t.url === i.values[0]);
-                
                 await i.update({ content: `⌛ Procesando: **${trackElegida.title}**...`, components: [] });
-                
+                // Pasamos el track directamente — iniciarReproduccion detecta que es un Track
                 return await iniciarReproduccion(trackElegida, interaction, canalVoz, player);
             });
 
@@ -109,39 +115,74 @@ module.exports = {
         }
 
         // 4. REPRODUCCIÓN DIRECTA (Si es un link)
-        return await iniciarReproduccion(resultado.tracks[0], interaction, canalVoz, player);
+        return await iniciarReproduccion(resultado, interaction, canalVoz, player);
     },
 };
 
-// FUNCIÓN AUXILIAR PARA DISPARAR EL STREAM
-async function iniciarReproduccion(track, interaction, canalVoz, player) {
+// FUNCIÓN AUXILIAR REFORZADA Y UNIFICADA
+async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, player) {
     try {
-        const { queue } = await player.play(canalVoz, track, {
+        // 1. DISPARAR LA REPRODUCCIÓN
+        const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
             nodeOptions: {
-                metadata: { canal: interaction.channel },
+                metadata: { canal: interaction.channel, guildId: interaction.guildId },
                 leaveOnEmpty: true,
                 leaveOnEmptyCooldown: 5000,
                 leaveOnEnd: true,
-                volume: 50, // Calidad controlada 
+                volume: 40,
                 selfDeaf: true
             }
         });
 
+        // 2. DETECCIÓN CORRECTA: distinguir entre Track individual, resultado de búsqueda y playlist
+        // - Si viene del menú de selección o de player.search(), puede ser un objeto Track directamente
+        // - Si viene de un link directo, puede ser { playlist, tracks }
+        const esPlaylist = !!(entidadAReproducir?.playlist);
+        const esTrackDirecto = typeof entidadAReproducir?.url === 'string'; // objeto Track puro
+
+        let cantidadPistas, nombreAMostrar, autorAMostrar;
+
+        if (esPlaylist) {
+            cantidadPistas = entidadAReproducir.tracks?.length ?? 1;
+            nombreAMostrar = `la playlist **${entidadAReproducir.playlist.title}**`;
+            autorAMostrar  = entidadAReproducir.playlist.author?.name || 'YouTube';
+        } else {
+            // Track individual (del menú o link directo)
+            cantidadPistas = 1;
+            nombreAMostrar = `**${track.title}**`;
+            autorAMostrar  = track.author;
+        }
+
+        // 3. AUDITORÍA SANITIZADA
         await log(interaction.guild, {
             categoria: 'musica',
-            titulo: 'Pista añadida al Laboratorio',
-            descripcion: `**[${track.title}](${track.url})** ha sido cargada correctamente.`,
+            titulo: esPlaylist ? 'Colección Cargada' : 'Pista Cargada',
+            descripcion: `${nombreAMostrar} ha sido inyectada en los circuitos de Graf Eisen.`,
             campos: [
-                { name: '🎤 Autor', value: track.author, inline: true },
-                { name: '⏱️ Duración', value: track.duration, inline: true }
+                { name: '🎤 Autor/Canal', value: autorAMostrar, inline: true },
+                { name: '🔢 Cantidad',    value: `${cantidadPistas} pista(s)`, inline: true },
+                { name: '📶 Calidad',     value: `Adaptativa (${Math.round(canalVoz.bitrate / 1000)}kbps)`, inline: true }
             ],
             usuario: interaction.user,
         });
 
-        await interaction.editReply(`✅ **${track.title}** añadida a la cola. ¡Disfruta del Hi-Fi!`);
+        // 4. RESPUESTA FINAL AL USUARIO
+        await interaction.editReply(`✅ ${nombreAMostrar} añadida a la cola. ¡Disfruta del audio Hi-Fi!`);
 
     } catch (error) {
-        console.error("Error al reproducir:", error);
-        await interaction.editReply('❌ ¡Graf Eisen ha tenido un fallo técnico! No pude procesar esa canción.');
+        const errorLimpio = sanitizeErrorMessage(error.message);
+        console.error('[Error de Audio]:', errorLimpio);
+
+        await log(interaction.guild, {
+            categoria: 'sistema',
+            titulo: 'Fallo de Ingestión',
+            descripcion: 'Graf Eisen no pudo procesar la fuente de audio.',
+            error: errorLimpio,
+            usuario: interaction.user
+        }).catch(() => null);
+
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply('❌ ¡Graf Eisen ha tenido un fallo técnico! No pude procesar la música.');
+        }
     }
 }

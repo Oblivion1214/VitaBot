@@ -41,12 +41,13 @@ module.exports = {
                 .setCustomId('cfg_categorias')
                 .setPlaceholder(l === 'es' ? 'Selecciona categorías...' : 'Select categories...')
                 .setMinValues(0)
-                .setMaxValues(4)
+                .setMaxValues(5)
                 .addOptions([
                     { label: '🎵 Música', value: 'musica', default: conf.categorias.musica },
                     { label: '🛡️ Moderación', value: 'moderacion', default: conf.categorias.moderacion },
                     { label: '⚙️ General', value: 'general', default: conf.categorias.general },
                     { label: '🚨 Sistema', value: 'sistema', default: conf.categorias.sistema },
+                    { label: '📡 Seguridad (Antivirus)', value: 'seguridad', default: conf.categorias.seguridad },
                 ]);
 
             const btnLang = new ButtonBuilder()
@@ -87,6 +88,7 @@ module.exports = {
                     moderacion: i.values.includes('moderacion'),
                     general: i.values.includes('general'),
                     sistema: i.values.includes('sistema'),
+                    seguridad: i.values.includes('seguridad'),
                 };
                 await i.deferUpdate();
 
@@ -133,6 +135,7 @@ function construirEmbed(config, lang) {
             { name: '🛡️ Moderación', value: config.categorias.moderacion ? '✅' : '❌', inline: true },
             { name: '⚙️ General', value: config.categorias.general ? '✅' : '❌', inline: true },
             { name: '🚨 Sistema', value: config.categorias.sistema ? '✅' : '❌', inline: true },
+            { name: '📡 Seguridad', value: config.categorias.seguridad ? '✅' : '❌', inline: true },
         )
         .setColor('#FF9900')
         .setFooter({ text: t.footer });

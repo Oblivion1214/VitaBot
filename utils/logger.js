@@ -59,6 +59,7 @@ function obtenerConfigServidor(guildId, idiomaDefecto = 'es') {
                 moderacion: true,
                 general: true,
                 sistema: true,
+                seguridad: true,
             }
         };
         guardarConfig(config);
@@ -127,7 +128,7 @@ async function obtenerCanalLog(guild) {
 
 // --- FUNCIÓN PRINCIPAL DE LOG ---
 
-async function log(guild, { categoria = 'general', titulo, descripcion, campos = [], usuario, error }) {
+async function log(guild, { categoria = 'general', titulo, descripcion, campos = [], usuario, error, componentes = [] }) {
     if (!guild) return;
 
     try {
@@ -163,7 +164,11 @@ async function log(guild, { categoria = 'general', titulo, descripcion, campos =
             });
         }
 
-        await canal.send({ embeds: [embed] }).catch(err => console.error('[Logger] Error al enviar mensaje:', err.message));
+        return await canal.send({ 
+            embeds: [embed], 
+            components: componentes // 👈 Esto activa los botones en el log
+        }).catch(err => console.error('[Logger] Error al enviar mensaje:', err.message));
+
     } catch(e) {
         console.error('[Logger Critical Error]:', e.message);
     }
