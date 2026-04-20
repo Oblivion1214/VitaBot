@@ -9,7 +9,7 @@ const Genius = require('genius-lyrics');
 const { log, sanitizeErrorMessage, obtenerConfigServidor } = require('./utils/logger');
 const { inicializarPlayer } = require('./utils/musicPlayer');
 const { manejarBotonesMusica } = require('./utils/musicButtons');
-const { registrarGuildCreate, reconciliarServidores } = require('./utils/guildSetup');
+const { registrarGuildCreate, reconciliarServidores, setupCollectors } = require('./utils/guildSetup');
 const axios = require('axios'); // Para análisis de enlaces en tiempo real
 const { escanearEnlace, ejecutarCuarentena, dominiosSeguros } = require('./utils/linkGuard');
 
@@ -114,6 +114,37 @@ client.on('interactionCreate', async (interaction) => {
     } else if (interaction.isButton() && (interaction.customId.startsWith('musica_'))) {
         await manejarBotonesMusica(interaction, player);
 
+    // ── SETUP DE BIENVENIDA (guildCreate): confirm, change_lang, cancel ──
+    // ⚠️ IMPORTANTE: estos botones son manejados por el collector de guildSetup.js
+    // cuando el bot está activo. El dispatcher global solo debe actuar como FALLBACK
+    // si el collector ya no existe (bot reiniciado después del guildCreate).
+    //
+    // Problema en DMs: interaction.guildId es NULL en mensajes directos.
+    // Por eso el Map se indexa por DOS claves en guildSetup.js:
+    //   - guild.id   → para interacciones desde canal público
+    //   - msg.id     → para interacciones desde DM
+    // Aquí buscamos por ambas para cubrir los dos casos.
+    } else if (
+        interaction.isButton() && (
+            interaction.customId.startsWith('confirm_setup_') ||
+            interaction.customId.startsWith('change_lang_') ||
+            interaction.customId.startsWith('cancel_setup_')
+        )
+    ) {
+        // Buscar collector activo por guildId (canal público) o por messageId (DM)
+        const guildId   = interaction.guildId ?? interaction.guild?.id;
+        const messageId = interaction.message?.id;
+        const hayCollector = setupCollectors.has(guildId) || setupCollectors.has(messageId);
+
+        // Si hay un collector activo, dejarlo manejarlo — no hacer nada aquí
+        if (hayCollector) return;
+
+        // Sin collector activo = bot fue reiniciado, el panel es un zombie
+        await interaction.reply({
+            content: '⚠️ El panel de configuración inicial expiró (el bot fue reiniciado). Usa `/config` para ajustar la configuración.',
+            flags: MessageFlags.Ephemeral
+        }).catch(() => null);
+
     // ── BOTONES DE ROLES (NUEVO) ──
     } else if (interaction.isButton() && interaction.customId.startsWith('dar_rol_')) {
         const roleId = interaction.customId.replace('dar_rol_', '');
@@ -195,26 +226,24 @@ client.on('interactionCreate', async (interaction) => {
 // 10. Monitor de Enlaces en Tiempo Real
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.content.includes('http')) return;
-    console.log(`[DEBUG] Enlace detectado de: ${message.author.tag}`); // Debug 1
-    const config = obtenerConfigServidor(message.guildId);
-    console.log(`[DEBUG] Estado del módulo Seguridad: ${config.categorias.seguridad}`); // Debug 2
+
+    const config = obtenerConfigServidor(message.guildId, 'es', message.guild?.name);
     if (!config.categorias.seguridad) return;
+
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const links = message.content.match(urlRegex);
     if (!links) return;
 
-    console.log(`[DEBUG] Analizando ${links.length} enlace(s) en el mensaje de ${message.author.tag}...`); // Debug 3
-
     for (const link of links) {
+        console.log(`[Security] Analizando enlace de ${message.author.tag}: ${link}`);
         try {
             const urlObj = new URL(link);
             const hostname = urlObj.hostname.replace('www.', '');
-
-            // Filtro rápido de Whitelist
             if (dominiosSeguros.some(d => hostname.endsWith(d))) continue;
 
             const reporte = await escanearEnlace(link);
             if (reporte.detectado) {
+                console.warn(`[Security] MALWARE DETECTADO: ${link} en "${message.guild.name}"`);
                 await ejecutarCuarentena(message, reporte);
             }
         } catch (e) {

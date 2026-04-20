@@ -5,7 +5,7 @@ const { dominiosSeguros, escanearEnlace } = require('../utils/linkGuard');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('analizar')
-        .setDescription('Escaneo multinivel: URLhaus + Google + VirusTotal + IPQS + Visual.')
+        .setDescription('Escaneo forense multinivel: URLhaus + Google + VirusTotal + IPQS + Visual.')
         .addStringOption(option =>
             option.setName('url')
                 .setDescription('La URL o link sospechoso a examinar')
@@ -52,14 +52,14 @@ module.exports = {
             const iconos  = {
                 CRÍTICO: 'https://cdn-icons-png.flaticon.com/512/753/753345.png',
                 ALTO:    'https://cdn-icons-png.flaticon.com/512/1680/1680012.png',
-                MEDIO:   'https://cdn-icons-png.flaticon.com/512/1680/1680012.png',
+                MEDIO:   'https://cdn-icons-png.flaticon.com/512/1303/1303847.png',
                 BAJO:    'https://cdn-icons-png.flaticon.com/512/845/845646.png'
             };
             const nivelKey = reporte.nivel || 'BAJO';
 
             // ── 5. Construir embed forense ─────────────────────────────────
             const embed = new EmbedBuilder()
-                .setTitle('🔬 Informe Forense de Seguridad Multinivel.')
+                .setTitle('🔬 Informe Forense de Seguridad Multinivel')
                 .setURL(visual?.reporte ?? urlVT)
                 .setColor(colores[nivelKey] ?? '#57F287')
                 .setThumbnail(iconos[nivelKey] ?? iconos.BAJO)
@@ -68,7 +68,9 @@ module.exports = {
                     {
                         name: '⚠️ Score de Riesgo Compuesto',
                         value: scoreCompuesto
-                            ? `${scoreCompuesto.emoji} **${scoreCompuesto.score}/100** — Nivel: **${scoreCompuesto.nivel}**\n${reporte.detectado ? `🚩 Motivo: \`${reporte.motivo}\`` : '✅ Sin amenazas confirmadas'}`
+                            ? `${scoreCompuesto.emoji} **${scoreCompuesto.score}/100** — Nivel: **${scoreCompuesto.nivel}**\n` +
+                              `${reporte.detectado ? `🚩 Motivo: \`${reporte.motivo}\`` : '✅ Sin amenazas confirmadas por APIs'}\n\n` +
+                              `${scoreCompuesto.contexto || ''}`
                             : '⚪ No calculado',
                         inline: false
                     },
@@ -118,8 +120,7 @@ module.exports = {
                         inline: false
                     }
                 )
-                .setFooter({ text: 'Graf Eisen Shield — Protocolo Antimalware Activo v7.0. Si no estas seguro sobre la seguridad de un enlace, examinalo en https://tria.ge/dashboard antes de compartirlo.'
-                })
+                .setFooter({ text: 'Graf Eisen Shield — Protocolo Forense Activo v7.0' })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });

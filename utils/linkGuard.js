@@ -90,29 +90,60 @@ async function obtenerAnalisisVisual(url) {
 // ─────────────────────────────────────────────
 // SCORE DE RIESGO COMPUESTO
 // Combina todas las fuentes en un número de 0–100 y un nivel de amenaza.
-// Así el usuario no tiene que interpretar 4 campos por separado.
+//
+// LÓGICA IMPORTANTE: La heurística (Drive, Mediafire, extensiones) suma puntos
+// solo como señal de ALERTA, no como confirmación de amenaza.
+// Si NINGUNA API confirma algo malo, el peso heurístico se reduce al 30%
+// para evitar falsos positivos en archivos propios del servidor.
 // ─────────────────────────────────────────────
 function calcularScoreCompuesto({ statsVT, resIPQS, esPhishingGoogle, resHaus, esServicioNube, tieneExtension }) {
-    let score = 0;
+    // Primero calculamos cuántas APIs confirman amenaza real
+    const confirmacionesAPI =
+        (resHaus?.url_status === 'online'   ? 1 : 0) +
+        (esPhishingGoogle                    ? 1 : 0) +
+        ((statsVT?.malicious ?? 0) > 0       ? 1 : 0) +
+        ((resIPQS?.risk_score ?? 0) >= 75    ? 1 : 0) +
+        (resIPQS?.phishing                   ? 1 : 0) +
+        (resIPQS?.malware                    ? 1 : 0);
 
-    if (tieneExtension)        score += 40; // archivo ejecutable = riesgo muy alto
-    if (esServicioNube)        score += 20; // almacenamiento externo = riesgo medio
-    if (esPhishingGoogle)      score += 35; // Google confirmó phishing
-    if (resHaus?.url_status === 'online') score += 40; // URLhaus: malware activo confirmado
-    if (statsVT?.malicious > 0) score += Math.min(statsVT.malicious * 5, 30); // hasta 30pts por VT
-    if (resIPQS?.risk_score)   score += Math.floor(resIPQS.risk_score * 0.15); // hasta ~15pts por IPQS
-    if (resIPQS?.phishing)     score += 15;
-    if (resIPQS?.malware)      score += 15;
+    const hayConfirmacionAPI = confirmacionesAPI > 0;
 
-    score = Math.min(score, 100);
+    // Puntos base de las APIs (siempre suman igual)
+    let scoreAPI = 0;
+    if (resHaus?.url_status === 'online')          scoreAPI += 40;
+    if (esPhishingGoogle)                          scoreAPI += 35;
+    if ((statsVT?.malicious ?? 0) > 0)            scoreAPI += Math.min((statsVT.malicious) * 5, 30);
+    if ((resIPQS?.risk_score ?? 0) > 0)           scoreAPI += Math.floor(resIPQS.risk_score * 0.15);
+    if (resIPQS?.phishing)                         scoreAPI += 15;
+    if (resIPQS?.malware)                          scoreAPI += 15;
+
+    // Puntos heurísticos: si alguna API confirma amenaza, peso completo.
+    // Si NINGUNA API confirma nada, reducimos al 30% → evita falsos positivos
+    // en archivos propios del servidor subidos a Drive/Mediafire.
+    let scoreHeuristico = 0;
+    if (tieneExtension)  scoreHeuristico += 40;
+    if (esServicioNube)  scoreHeuristico += 20;
+
+    const factorHeuristico = hayConfirmacionAPI ? 1.0 : 0.30;
+    const score = Math.min(Math.round(scoreAPI + scoreHeuristico * factorHeuristico), 100);
 
     let nivel, emoji;
-    if      (score >= 70) { nivel = 'CRÍTICO';  emoji = '🔴'; }
-    else if (score >= 40) { nivel = 'ALTO';     emoji = '🟠'; }
-    else if (score >= 20) { nivel = 'MEDIO';    emoji = '🟡'; }
-    else                  { nivel = 'BAJO';     emoji = '🟢'; }
+    if      (score >= 70) { nivel = 'CRÍTICO'; emoji = '🔴'; }
+    else if (score >= 40) { nivel = 'ALTO';    emoji = '🟠'; }
+    else if (score >= 15) { nivel = 'MEDIO';   emoji = '🟡'; }
+    else                  { nivel = 'BAJO';    emoji = '🟢'; }
 
-    return { score, nivel, emoji };
+    // Contexto explicativo para el usuario — especialmente útil en falsos positivos
+    let contexto = '';
+    if (!hayConfirmacionAPI && (esServicioNube || tieneExtension)) {
+        contexto = '⚠️ *Alerta preventiva: ninguna base de datos de amenazas detectó contenido malicioso. ' +
+                   'El score refleja solo que es un servicio de almacenamiento externo o tiene extensión de riesgo. ' +
+                   'Si es un archivo de tu comunidad, probablemente sea seguro.*';
+    } else if (hayConfirmacionAPI) {
+        contexto = `🚨 *${confirmacionesAPI} fuente(s) de inteligencia confirmaron una amenaza real.*`;
+    }
+
+    return { score, nivel, emoji, contexto, confirmacionesAPI };
 }
 
 // ─────────────────────────────────────────────
