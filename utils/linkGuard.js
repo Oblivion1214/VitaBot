@@ -1,4 +1,4 @@
-// utils/linkGuard.js — Motor de Seguridad Grado Belka v7.0
+// utils/linkGuard.js — Motor de Seguridad Grado Belka v8.0
 const axios = require('axios');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { log } = require('./logger');
@@ -11,19 +11,25 @@ const dominiosSeguros = [
     'youtube.com', 'youtu.be', 'music.youtube.com', 'googlevideo.com',
     'soundcloud.com', 'apple.com', 'music.apple.com', 'netflix.com', 'vimeo.com',
     'github.com', 'githubusercontent.com', 'gitlab.com', 'bitbucket.org',
-    'google.com', 'google.com.mx', 'accounts.google.com', 'googleusercontent.com', 'gstatic.com', 'bing.com',
+    'google.com', 'accounts.google.com', 'googleusercontent.com', 'gstatic.com', 'bing.com',
     'cloudflare.com', 'steamcommunity.com', 'steampowered.com', 'tenor.com', 'giphy.com',
     'wikipedia.org', 'wikimedia.org', 'twitch.tv', 'reddit.com', 'redd.it',
-    'spotify.com', 'open.spotify.com'
+    'spotify.com', 'open.spotify.com', 'twitter.com', 'x.com', 'instagram.com',
+    'tiktok.com', 'linkedin.com', 'amazon.com', 'microsoft.com', 'office.com'
 ];
 
+// Extensiones que indican un ejecutable real o script potencialmente peligroso.
+// ⚠️ Se eliminaron .js y .zip porque son demasiado comunes en contextos legítimos
+//    (.js en proyectos web, .zip en entregas de archivos de comunidades).
+//    Quedan solo los que casi nunca tienen uso legítimo en un chat de Discord.
 const extensionesRiesgo = [
-    '.exe', '.msi', '.bat', '.ps1', '.vbs', '.zip', '.rar', '.7z', '.iso',
-    '.scr', '.jar', '.apk', '.com', '.dll', '.sys', '.bin', '.cmd', '.js',
-    '.wsf', '.cpl', '.msc', '.reg', '.vb', '.vbe', '.ws', '.wsh', '.hta',
-    '.pif', '.gadget', '.lnk'
+    '.exe', '.msi', '.bat', '.ps1', '.vbs',
+    '.scr', '.jar', '.apk', '.dll', '.sys', '.cmd',
+    '.wsf', '.cpl', '.msc', '.reg', '.vb', '.vbe', '.ws', '.wsh',
+    '.hta', '.pif', '.gadget', '.lnk'
 ];
 
+// Servicios de almacenamiento y acortadores de URL — señal de alerta, no confirmación.
 const serviciosNube = [
     'drive.google.com', 'mediafire.com', 'dropbox.com', 'mega.nz',
     'anonfiles.com', 'cuty.io', 'cutt.ly', 'bit.ly', 't.co', 'ow.ly',
@@ -34,32 +40,24 @@ const serviciosNube = [
 ];
 
 // ─────────────────────────────────────────────
-// EXPANSIÓN DE URL CON SEGUIMIENTO DE REDIRECCIONES
-// Usa HEAD primero (sin descargar body) y GET solo como fallback.
+// EXPANSIÓN DE URL
+// HEAD primero (sin descargar body), GET como fallback.
 // ─────────────────────────────────────────────
 async function expandirUrl(urlOriginal) {
     const ruta = [urlOriginal];
     const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0' };
-
-    const opciones = {
-        maxRedirects: 5,
-        timeout: 5000,
-        headers,
-        validateStatus: () => true, // no lanzar error en 4xx/5xx
-    };
+    const opciones = { maxRedirects: 5, timeout: 5000, headers, validateStatus: () => true };
 
     try {
-        // HEAD primero: no descarga body, mucho más eficiente
         const res = await axios.head(urlOriginal, opciones);
         const urlFinal = res.request?.res?.responseUrl || res.config?.url || urlOriginal;
         if (urlFinal !== urlOriginal) ruta.push(urlFinal);
         return { urlFinal, ruta };
     } catch {
-        // Fallback a GET si HEAD falla (algunos servidores lo bloquean)
         try {
             const res = await axios.get(urlOriginal, { ...opciones, responseType: 'stream' });
             const urlFinal = res.request?.res?.responseUrl || urlOriginal;
-            res.data.destroy(); // cerrar stream inmediatamente, no necesitamos el body
+            res.data.destroy();
             if (urlFinal !== urlOriginal) ruta.push(urlFinal);
             return { urlFinal, ruta };
         } catch {
@@ -69,14 +67,13 @@ async function expandirUrl(urlOriginal) {
 }
 
 // ─────────────────────────────────────────────
-// ANÁLISIS VISUAL CON urlscan.io
+// ANÁLISIS VISUAL urlscan.io
 // ─────────────────────────────────────────────
 async function obtenerAnalisisVisual(url) {
     if (!process.env.URLSCAN_KEY) return null;
     try {
         const res = await axios.post('https://urlscan.io/api/v1/scan/', {
-            url,
-            visibility: 'public'
+            url, visibility: 'public'
         }, {
             headers: { 'API-Key': process.env.URLSCAN_KEY, 'Content-Type': 'application/json' },
             timeout: 5000
@@ -88,100 +85,182 @@ async function obtenerAnalisisVisual(url) {
 }
 
 // ─────────────────────────────────────────────
-// SCORE DE RIESGO COMPUESTO
-// Combina todas las fuentes en un número de 0–100 y un nivel de amenaza.
-// Así el usuario no tiene que interpretar 4 campos por separado.
+// SCORE DE RIESGO COMPUESTO v3
+//
+// Problema anterior: IPQS=89/100 + VT=1 daban score final 18/100 porque
+// el peso de IPQS era solo 15%. Eso no refleja la realidad.
+//
+// Solución: el score final es el MÁXIMO entre:
+//   (a) Score agregado de todas las fuentes
+//   (b) El peor indicador individual escalado
+// Así un IPQS de 89 no puede quedar diluido a 13.
 // ─────────────────────────────────────────────
 function calcularScoreCompuesto({ statsVT, resIPQS, esPhishingGoogle, resHaus, esServicioNube, tieneExtension }) {
-    let score = 0;
+    const confirmacionesAPI =
+        (resHaus?.url_status === 'online' ? 1 : 0) +
+        (esPhishingGoogle                  ? 1 : 0) +
+        ((statsVT?.malicious ?? 0) > 0     ? 1 : 0) +
+        ((resIPQS?.risk_score ?? 0) >= 75  ? 1 : 0) +
+        (resIPQS?.phishing                 ? 1 : 0) +
+        (resIPQS?.malware                  ? 1 : 0);
 
-    if (tieneExtension)        score += 40; // archivo ejecutable = riesgo muy alto
-    if (esServicioNube)        score += 20; // almacenamiento externo = riesgo medio
-    if (esPhishingGoogle)      score += 35; // Google confirmó phishing
-    if (resHaus?.url_status === 'online') score += 40; // URLhaus: malware activo confirmado
-    if (statsVT?.malicious > 0) score += Math.min(statsVT.malicious * 5, 30); // hasta 30pts por VT
-    if (resIPQS?.risk_score)   score += Math.floor(resIPQS.risk_score * 0.15); // hasta ~15pts por IPQS
-    if (resIPQS?.phishing)     score += 15;
-    if (resIPQS?.malware)      score += 15;
+    const hayConfirmacionAPI = confirmacionesAPI > 0;
 
-    score = Math.min(score, 100);
+    // ── Score por API (puntos directos) ──
+    let scoreAPI = 0;
+    if (resHaus?.url_status === 'online')    scoreAPI += 40;
+    if (esPhishingGoogle)                    scoreAPI += 35;
+    if ((statsVT?.malicious ?? 0) > 0)      scoreAPI += Math.min(statsVT.malicious * 8, 30);
+    if (resIPQS?.phishing)                   scoreAPI += 20;
+    if (resIPQS?.malware)                    scoreAPI += 20;
+
+    // ── Peor indicador individual (para evitar dilución) ──
+    // Si IPQS dice 89/100, ese valor ya es un score de riesgo — no lo diluimos
+    const peorIPQS      = resIPQS?.risk_score ?? 0;
+    const peorVT        = (statsVT?.malicious ?? 0) > 0 ? Math.min(statsVT.malicious * 15, 60) : 0;
+    const peorGoogle    = esPhishingGoogle ? 70 : 0;
+    const peorHaus      = resHaus?.url_status === 'online' ? 80 : 0;
+    const peorIndicador = Math.max(peorIPQS, peorVT, peorGoogle, peorHaus);
+
+    // ── Heurística (peso reducido sin confirmación de APIs) ──
+    let scoreHeuristico = 0;
+    if (tieneExtension)  scoreHeuristico += 40;
+    if (esServicioNube)  scoreHeuristico += 20;
+    const factorHeuristico = hayConfirmacionAPI ? 1.0 : 0.25;
+
+    // ── Score final: máximo entre agregado y peor indicador ──
+    const scoreAgregado = Math.round(scoreAPI + scoreHeuristico * factorHeuristico);
+    const score = Math.min(Math.max(scoreAgregado, hayConfirmacionAPI ? peorIndicador : 0), 100);
 
     let nivel, emoji;
-    if      (score >= 70) { nivel = 'CRÍTICO';  emoji = '🔴'; }
-    else if (score >= 40) { nivel = 'ALTO';     emoji = '🟠'; }
-    else if (score >= 20) { nivel = 'MEDIO';    emoji = '🟡'; }
-    else                  { nivel = 'BAJO';     emoji = '🟢'; }
+    if      (score >= 75) { nivel = 'CRÍTICO'; emoji = '🔴'; }
+    else if (score >= 50) { nivel = 'ALTO';    emoji = '🟠'; }
+    else if (score >= 25) { nivel = 'MEDIO';   emoji = '🟡'; }
+    else                  { nivel = 'BAJO';    emoji = '🟢'; }
 
-    return { score, nivel, emoji };
+    // ── Contexto claro y sin contradicciones ──
+    let contexto = '';
+    if (hayConfirmacionAPI) {
+        const fuentes = [];
+        if (resHaus?.url_status === 'online')   fuentes.push('URLhaus');
+        if (esPhishingGoogle)                    fuentes.push('Google Safe Browsing');
+        if ((statsVT?.malicious ?? 0) > 0)      fuentes.push(`VirusTotal (${statsVT.malicious} motores)`);
+        if ((resIPQS?.risk_score ?? 0) >= 75)   fuentes.push(`IPQS (${resIPQS.risk_score}/100)`);
+        if (resIPQS?.phishing)                   fuentes.push('IPQS phishing');
+        if (resIPQS?.malware)                    fuentes.push('IPQS malware');
+        contexto = `🚨 Detectado por: **${fuentes.join(', ')}**`;
+    } else if (esServicioNube && !tieneExtension) {
+        contexto = '📦 Almacenamiento externo — ninguna API detectó malware.';
+    } else if (tieneExtension) {
+        contexto = '⚙️ Archivo ejecutable — ninguna API lo marcó como malware.';
+    } else {
+        contexto = '✅ Ninguna base de datos registró actividad maliciosa.';
+    }
+
+    return { score, nivel, emoji, contexto, confirmacionesAPI };
 }
 
 // ─────────────────────────────────────────────
-// MOTOR PRINCIPAL DE ESCANEO
+// HELPER: texto legible para el resultado de VirusTotal
+// Distingue entre "sin datos disponibles", "analizado y limpio" y "amenaza detectada"
+// ─────────────────────────────────────────────
+function textoVirusTotal(statsVT) {
+    if (!statsVT) return '⚪ Sin análisis previo en VT';
+    if (statsVT.malicious === 0 && statsVT.suspicious === 0) {
+        return `✅ Limpio (${statsVT.harmless ?? 0} motores sin detección)`;
+    }
+    return `🚨 **${statsVT.malicious}** maliciosos | ⚠️ **${statsVT.suspicious}** sospechosos`;
+}
+
+// ─────────────────────────────────────────────
+// HELPER: texto legible para IPQualityScore
+// ─────────────────────────────────────────────
+function textoIPQS(resIPQS) {
+    if (!resIPQS) return '⚪ Sin análisis (API no configurada)';
+    const score = resIPQS.risk_score ?? 0;
+    const flags = [
+        resIPQS.phishing ? '🚨 Phishing' : null,
+        resIPQS.malware  ? '🚨 Malware'  : null,
+        resIPQS.suspicious ? '⚠️ Sospechoso' : null,
+    ].filter(Boolean).join(' | ');
+    const icono = score >= 75 ? '🚨' : score >= 40 ? '⚠️' : '✅';
+    return `${icono} Riesgo: **${score}/100**${flags ? `\n${flags}` : ''}`;
+}
+
+// ─────────────────────────────────────────────
+// MOTOR PRINCIPAL DE ESCANEO v8
+//
+// Cambio clave: la heurística YA NO pone detectado=true por sí sola.
+// Solo las APIs confirman una detección real. La heurística sube el score
+// como señal de alerta pero no activa la cuarentena automática.
+// Esto elimina los falsos positivos en archivos legítimos de Drive/Mediafire.
 // ─────────────────────────────────────────────
 async function escanearEnlace(link) {
     const { urlFinal, ruta } = await expandirUrl(link);
-    const urlObj    = new URL(urlFinal);
-    const hostname  = urlObj.hostname.replace('www.', '');
-    const cleanUrl  = urlFinal.replace(/\/$/, '');
+    const urlObj   = new URL(urlFinal);
+    const hostname = urlObj.hostname.replace('www.', '');
+    const cleanUrl = urlFinal.replace(/\/$/, '');
 
     let reporte = {
         detectado: false,
-        motivo: '',
-        nivel: 'BAJO',
-        score: 0,
+        motivo:    '',
+        nivel:     'BAJO',
+        score:     0,
         cleanUrl,
         ruta,
-        visual: null,
+        visual:    null,
         resultados: {}
     };
 
-    // ── 1. Heurística rápida (sin llamadas a API) ────────────────────────
+    // ── 1. Heurística rápida (señal de alerta, NO detección) ─────────────
     const esServicioNube = serviciosNube.some(s => hostname.includes(s));
     const tieneExtension = extensionesRiesgo.some(ext => urlObj.pathname.toLowerCase().endsWith(ext));
+    // ⚠️ Ya NO marcamos reporte.detectado = true aquí.
+    //    La cuarentena solo se activa si alguna API confirma la amenaza.
 
-    if (esServicioNube || tieneExtension) {
-        reporte.detectado = true;
-        reporte.motivo = tieneExtension
-            ? `Archivo sospechoso: \`${urlObj.pathname.split('/').pop()}\``
-            : 'Almacenamiento / acortador externo';
-        reporte.nivel  = tieneExtension ? 'CRÍTICO' : 'MEDIO';
+    // ── 2. Whitelist ──────────────────────────────────────────────────────
+    if (dominiosSeguros.some(d => hostname.endsWith(d))) {
+        return { ...reporte, motivo: 'Dominio en whitelist', nivel: 'BAJO', score: 0 };
     }
 
-    // ── 2. Whitelist (evita análisis innecesario en dominios de confianza) ─
-    if (!reporte.detectado && dominiosSeguros.some(d => hostname.endsWith(d))) {
-        return { ...reporte, detectado: false, motivo: 'Dominio de confianza', nivel: 'BAJO', score: 0 };
-    }
-
-    // ── 3. Análisis multinivel paralelo ─────────────────────────────────
+    // ── 3. Análisis multinivel paralelo ──────────────────────────────────
     const urlIdVT = Buffer.from(cleanUrl).toString('base64').replace(/=/g, '');
 
     try {
         const [resHaus, resGoogle, resIPQS, resVT, visual] = await Promise.all([
-            // URLhaus: base de datos de malware activo (gratuita, sin key)
-            axios.post(
-                'https://urlhaus-api.abuse.ch/v1/url/',
-                new URLSearchParams({ url: cleanUrl }),
-                { timeout: 5000 }
-            ).catch(() => null),
+            process.env.URLHAUS_KEY
+                ? axios.post(
+                    'https://urlhaus-api.abuse.ch/v1/url/',
+                    new URLSearchParams({ url: cleanUrl }),
+                    {
+                        headers: { 
+                            'Auth-Key': process.env.URLHAUS_KEY,
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) vitabot-security-module'
+                        },
+                        timeout: 10000 // ⏳ Aumentado a 10 segundos
+                    }
+                ).catch(err => {
+                    console.error('[URLhaus Error]:', err.response?.data || err.message);
+                    return null;
+                })
+                : null,
 
-            // Google Safe Browsing
             process.env.GOOGLE_SAFE_BROWSING_KEY
                 ? axios.post(
                     `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${process.env.GOOGLE_SAFE_BROWSING_KEY}`,
                     {
                         client: { clientId: 'vitabot', clientVersion: '3.0' },
                         threatInfo: {
-                            threatTypes: ['MALWARE', 'SOCIAL_ENGINEERING', 'UNWANTED_SOFTWARE'],
-                            platformTypes: ['ANY_PLATFORM'],
+                            threatTypes:      ['MALWARE', 'SOCIAL_ENGINEERING', 'UNWANTED_SOFTWARE'],
+                            platformTypes:    ['ANY_PLATFORM'],
                             threatEntryTypes: ['URL'],
-                            threatEntries: [{ url: cleanUrl }]
+                            threatEntries:    [{ url: cleanUrl }]
                         }
                     },
                     { timeout: 5000 }
                 ).catch(() => null)
                 : null,
 
-            // IPQualityScore
             process.env.IPQS_KEY
                 ? axios.get(
                     `https://www.ipqualityscore.com/api/json/url/${process.env.IPQS_KEY}/${encodeURIComponent(cleanUrl)}`,
@@ -189,7 +268,6 @@ async function escanearEnlace(link) {
                 ).catch(() => null)
                 : null,
 
-            // VirusTotal
             process.env.VIRUSTOTAL_KEY
                 ? axios.get(
                     `https://www.virustotal.com/api/v3/urls/${urlIdVT}`,
@@ -197,29 +275,39 @@ async function escanearEnlace(link) {
                 ).catch(() => null)
                 : null,
 
-            // urlscan.io — análisis visual
             obtenerAnalisisVisual(cleanUrl)
         ]);
 
-        const statsVT        = resVT?.data?.data?.attributes?.last_analysis_stats;
+        const statsVT          = resVT?.data?.data?.attributes?.last_analysis_stats;
         const esPhishingGoogle = !!resGoogle?.data?.matches;
-        const resHausData    = resHaus?.data;
-        const resIPQSData    = resIPQS?.data;
+        const resHausData      = resHaus?.data;
+        const resIPQSData      = resIPQS?.data;
 
-        // Determinar detección por API (solo si la heurística no ya lo marcó)
-        if (!reporte.detectado) {
-            if (resHausData?.query_status === 'ok' && resHausData?.url_status === 'online') {
-                reporte = { ...reporte, detectado: true, motivo: 'URLhaus: Malware activo confirmado', nivel: 'CRÍTICO' };
-            } else if (esPhishingGoogle) {
-                reporte = { ...reporte, detectado: true, motivo: 'Google Safe Browsing: Phishing/Sitio engañoso', nivel: 'ALTO' };
-            } else if (statsVT?.malicious > 1) {
-                reporte = { ...reporte, detectado: true, motivo: `VirusTotal: ${statsVT.malicious} motores detectaron amenaza`, nivel: 'ALTO' };
-            } else if (resIPQSData?.risk_score >= 85) {
-                reporte = { ...reporte, detectado: true, motivo: `IPQualityScore: Riesgo alto (${resIPQSData.risk_score}/100)`, nivel: 'ALTO' };
-            }
+        // ── 4. Detección: solo por confirmación de APIs ───────────────────
+        if (resHausData?.query_status === 'ok' && resHausData?.url_status === 'online') {
+            reporte.detectado = true;
+            reporte.motivo    = 'URLhaus: Malware activo confirmado en base de datos';
+            reporte.nivel     = 'CRÍTICO';
+        } else if (esPhishingGoogle) {
+            reporte.detectado = true;
+            reporte.motivo    = 'Google Safe Browsing: Phishing o sitio engañoso confirmado';
+            reporte.nivel     = 'ALTO';
+        } else if ((statsVT?.malicious ?? 0) > 1) {
+            reporte.detectado = true;
+            reporte.motivo    = `VirusTotal: ${statsVT.malicious} motores de antivirus detectaron amenaza`;
+            reporte.nivel     = 'ALTO';
+        } else if ((resIPQSData?.risk_score ?? 0) >= 85 || resIPQSData?.phishing || resIPQSData?.malware) {
+            reporte.detectado = true;
+            reporte.motivo    = `IPQualityScore: Score de riesgo ${resIPQSData.risk_score}/100${resIPQSData.phishing ? ' · Phishing confirmado' : ''}${resIPQSData.malware ? ' · Malware confirmado' : ''}`;
+            reporte.nivel     = 'ALTO';
+        } else if (tieneExtension) {
+            // Extensión ejecutable sin confirmación de APIs: alerta, no detección
+            reporte.motivo = `Extensión de riesgo: \`${urlObj.pathname.split('/').pop()}\` (sin confirmación de APIs)`;
+        } else if (esServicioNube) {
+            reporte.motivo = 'Servicio de almacenamiento externo (sin confirmación de APIs)';
         }
 
-        // Score compuesto unificado
+        // ── 5. Score compuesto ────────────────────────────────────────────
         const compuesto = calcularScoreCompuesto({
             statsVT, resIPQS: resIPQSData, esPhishingGoogle,
             resHaus: resHausData, esServicioNube, tieneExtension
@@ -230,10 +318,13 @@ async function escanearEnlace(link) {
         reporte.visual = visual;
         reporte.resultados = {
             statsVT,
-            resHaus: resHausData,
+            resHaus:         resHausData,
             esPhishingGoogle,
-            resIPQS: resIPQSData,
-            scoreCompuesto: compuesto
+            resIPQS:         resIPQSData,
+            scoreCompuesto:  compuesto,
+            // Flags para el embed
+            esServicioNube,
+            tieneExtension
         };
 
     } catch (error) {
@@ -245,15 +336,17 @@ async function escanearEnlace(link) {
 
 // ─────────────────────────────────────────────
 // GESTIÓN DE CUARENTENA
-// Borra el mensaje, notifica el canal y crea el log de moderación
-// con botones Aprobar/Eliminar que expiran en 10 minutos.
+// Solo se activa cuando reporte.detectado === true (confirmación de API).
 // ─────────────────────────────────────────────
 async function ejecutarCuarentena(message, reporte) {
     const originalContent = message.content;
     await message.delete().catch(() => null);
 
+    const { scoreCompuesto } = reporte.resultados ?? {};
+
     await message.channel.send(
-        `🛡️ **Cuarentena Belka:** Enlace de ${message.author} bloqueado por seguridad.\nMotivo: \`${reporte.motivo}\` | Riesgo: **${reporte.resultados?.scoreCompuesto?.score ?? '?'}/100**`
+        `🛡️ **Cuarentena:** Enlace de ${message.author} bloqueado.\n` +
+        `Motivo: \`${reporte.motivo}\` | Score: **${scoreCompuesto?.score ?? '?'}/100**`
     ).catch(() => null);
 
     const row = new ActionRowBuilder().addComponents(
@@ -269,84 +362,57 @@ async function ejecutarCuarentena(message, reporte) {
             .setStyle(ButtonStyle.Danger)
     );
 
-    const { statsVT, resIPQS, esPhishingGoogle, resHaus, scoreCompuesto } = reporte.resultados ?? {};
+    const { statsVT, resIPQS, esPhishingGoogle, resHaus } = reporte.resultados ?? {};
 
-    // ⚠️ El nombre del campo DEBE coincidir exactamente con el que index.js
-    // busca para restaurar el mensaje: '📝 Contenido Original'
     const logMsg = await log(message.guild, {
         categoria: 'sistema',
-        titulo: `🚨 Alerta de Seguridad — Riesgo ${scoreCompuesto?.emoji ?? ''} ${scoreCompuesto?.nivel ?? reporte.nivel}`,
-        descripcion: `Análisis multinivel completado. Acción pendiente de moderador. Se auto-purgará en **10 minutos**.`,
+        titulo:    `🚨 Alerta de Seguridad — ${scoreCompuesto?.emoji ?? ''} ${scoreCompuesto?.nivel ?? reporte.nivel}`,
+        descripcion: `Enlace bloqueado automáticamente. Un moderador debe revisar en los próximos **10 minutos**.`,
         campos: [
-            // Fila 1: score compuesto (ancho completo, el más importante)
             {
-                name: '⚠️ Score de Riesgo Compuesto',
-                value: scoreCompuesto
-                    ? `${scoreCompuesto.emoji} **${scoreCompuesto.score}/100** — Nivel: **${scoreCompuesto.nivel}**`
+                name:   '⚠️ Score de Riesgo',
+                value:  scoreCompuesto
+                    ? `${scoreCompuesto.emoji} **${scoreCompuesto.score}/100** — ${scoreCompuesto.nivel}\n${scoreCompuesto.contexto}`
                     : '⚪ No calculado',
                 inline: false
             },
-            // Fila 2: 3 fuentes inline (ocupan una fila completa juntas)
+            { name: '🛑 Google Safe Browsing', value: esPhishingGoogle ? '🚨 Phishing confirmado' : '✅ Limpio',    inline: true },
+            { name: '🛡️ VirusTotal',           value: textoVirusTotal(statsVT),                                      inline: true },
+            { name: '📊 IPQualityScore',        value: textoIPQS(resIPQS),                                           inline: true },
             {
-                name: '🛑 Google Safe Browsing',
-                value: esPhishingGoogle ? '🚨 Phishing' : '✅ Limpio',
-                inline: true
-            },
-            {
-                name: '🛡️ VirusTotal',
-                value: statsVT
-                    ? `🚨 ${statsVT.malicious} maliciosos\n⚠️ ${statsVT.suspicious} sospechosos`
-                    : '⚪ Sin datos',
-                inline: true
-            },
-            {
-                name: '📊 IPQualityScore',
-                value: resIPQS
-                    ? `🚩 **${resIPQS.risk_score ?? 0}/100**\nPhishing: ${resIPQS.phishing ? '🚨' : '✅'} | Malware: ${resIPQS.malware ? '🚨' : '✅'}`
-                    : '⚪ Sin datos',
-                inline: true
-            },
-            // Fila 3: URLhaus (ancho completo)
-            {
-                name: '🦠 URLhaus',
-                value: resHaus?.query_status === 'ok'
-                    ? (resHaus.url_status === 'online' ? '🚨 Malware activo' : `⚠️ Registrado (${resHaus.url_status})`)
+                name:   '🦠 URLhaus',
+                value:  resHaus?.query_status === 'ok'
+                    ? (resHaus.url_status === 'online' ? '🚨 Malware activo en base de datos' : `⚠️ Registrado (${resHaus.url_status})`)
                     : '✅ No encontrado',
                 inline: false
             },
-            // Fila 4: diagnóstico y ruta (ancho completo)
-            {
-                name: '🚩 Diagnóstico Principal',
-                value: `\`${reporte.motivo}\``,
-                inline: false
-            },
-            {
-                name: '🛤️ Ruta de Redirección',
-                value: reporte.ruta.map(r => `↪️ \`${new URL(r).hostname}\``).join('\n'),
-                inline: false
-            },
-            // ⚠️ Este campo lo usa index.js para restaurar el mensaje — no cambiar el nombre
-            {
-                name: '📝 Contenido Original',
-                value: originalContent.substring(0, 1024),
-                inline: false
-            }
+            { name: '🚩 Motivo del Bloqueo',   value: `\`${reporte.motivo || 'Sin motivo registrado'}\``,           inline: false },
+            { name: '🛤️ Ruta Detectada',       value: reporte.ruta.map(r => `↪️ \`${new URL(r).hostname}\``).join('\n') || '—', inline: false },
+            // ⚠️ Nombre exacto requerido por index.js para restaurar el mensaje
+            { name: '📝 Contenido Original',   value: originalContent.substring(0, 1024),                           inline: false }
         ],
-        usuario: message.author,
+        usuario:     message.author,
         componentes: [row]
     });
 
     if (logMsg) {
         setTimeout(async () => {
             const freshMsg = await logMsg.fetch().catch(() => null);
-            if (freshMsg && freshMsg.components.length > 0) {
+            if (freshMsg?.components.length > 0) {
                 await freshMsg.edit({
-                    content: '⏰ **Revisión expirada:** El enlace ha sido purgado permanentemente sin acción de moderador.',
+                    content:    '⏰ **Revisión expirada:** Nadie aprobó ni rechazó el enlace en 10 minutos.',
                     components: []
                 }).catch(() => null);
             }
-        }, 600_000); // 10 minutos
+        }, 600_000);
     }
 }
 
-module.exports = { dominiosSeguros, expandirUrl, escanearEnlace, ejecutarCuarentena };
+module.exports = {
+    dominiosSeguros,
+    expandirUrl,
+    escanearEnlace,
+    ejecutarCuarentena,
+    textoVirusTotal,
+    textoIPQS
+};
