@@ -664,6 +664,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             const bufsize  = maxrate * 2;
 
             const ffmpegArgs = [
+                '-re',                        // <--- AÑADIR ESTA LÍNEA en ambos modos (PC y VM) para simular velocidad de reproducción real y evitar bursts
                 '-reconnect',             '1',
                 '-reconnect_streamed',    '1',
                 '-reconnect_delay_max',   '10',
