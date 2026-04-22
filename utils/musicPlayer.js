@@ -605,7 +605,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 resolve({
                     stream:        res,
                     type:          StreamType.Opus,
-                    highWaterMark: 1 << 20, // 1MB
+                    highWaterMark: 1 << 25, // 32MB
                 });
             });
 
