@@ -6,7 +6,7 @@ const { Player, BaseExtractor, Track, Playlist } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
 const { StreamType } = require('@discordjs/voice');
 const { spawn } = require('child_process');
-const ffmpegPath = require('ffmpeg-static');
+//const ffmpegPath = require('ffmpeg-static'); Solo usar en windows, en Linux y Mac se asume ffmpeg instalado globalmente
 const youtubeExt = require('youtube-ext');
 const youtubedl = require('youtube-dl-exec');
 const fs = require('fs');
@@ -223,7 +223,9 @@ class YoutubeExtExtractor extends BaseExtractor {
                         noCheckCertificates: true,
                         quiet: true,
                         noWarnings: true
-                    }, { windowsHide: true, maxBuffer: 1024 * 1024 * 100 });
+                    }, { 
+                        //windowsHide: true, 
+                        maxBuffer: 1024 * 1024 * 100 });
 
                     const json = (typeof output === 'string') ? JSON.parse(output) : output;
 
@@ -417,7 +419,10 @@ class YoutubeExtExtractor extends BaseExtractor {
                     noWarnings: true,
                     noCheckCertificates: true,
                     preferFreeFormats: true,
-                }, { windowsHide: true });
+                    noPlaylist: true,
+                }, { maxBuffer: 1024 * 1024 * 10 } // ← NUEVO: límite de 10MB
+                //{ windowsHide: true }
+                );
 
                 const formats = (info.formats || []).filter(f => f.acodec !== 'none' && f.url);
                 if (!formats.length) throw new Error('No se encontró ningún formato de audio');
@@ -457,8 +462,8 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-reconnect_delay_max', '10',
                 // reconnect_at_eof solo en vivos — en audio pregrabado causa falsos errores -10054
                 ...(esLive ? ['-reconnect_at_eof', '1'] : []),
-                '-probesize',           '4M',
-                '-analyzeduration',     '4M',
+                '-probesize',           '512k',
+                '-analyzeduration',     '512k',
                 '-loglevel',            'error',
                 '-i',                   audioUrl,
                 '-vn',
@@ -487,9 +492,9 @@ class YoutubeExtExtractor extends BaseExtractor {
             args.push('pipe:1');
 
             // ── 4. SPAWN FFMPEG ────────────────────────────────────────────
-            const ffmpegProcess = spawn(ffmpegPath, args, {
+            const ffmpegProcess = spawn('ffmpeg', args, {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                windowsHide: true,
+                //windowsHide: true,
             });
 
             ffmpegProcess.stderr.on('data', (data) => {
@@ -538,7 +543,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             return {
                 stream:         ffmpegProcess.stdout,
                 type:           StreamType.Opus,
-                highWaterMark:  1 << 25, // 32MB de buffer → reduce micro-cortes
+                highWaterMark:  1 << 18, // ANTES: 1 << 25 (256KB en lugar de 32MB)
             };
 
         } catch (e) {
