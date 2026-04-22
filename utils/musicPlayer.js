@@ -656,7 +656,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             '--no-warnings',
             '--no-check-certificates',
             '--no-playlist',
-            '--format', 'bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio',
+            '--format', 'bestaudio',
             '--retries', '10',
             '--fragment-retries', '10',
             '--throttled-rate', '100K',
