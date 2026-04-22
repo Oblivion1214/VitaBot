@@ -20,3 +20,6 @@ Thumbs.db
 
 # Archivos de prueba y desarrollo
 check.js
+
+# Server de audio local para pruebas, NUNCA subir esto
+audioServer.js
