@@ -554,7 +554,7 @@ class YoutubeExtExtractor extends BaseExtractor {
 
                 resolve({
                     stream:        res,
-                    type:          StreamType.Opus,
+                    type:          StreamType.OggOpus, // ⬅️ CAMBIO CRÍTICO: De Opus a OggOpus
                     highWaterMark: 1 << 18, // 256KB — NO usar 8MB, causaría burst
                 });
             });
@@ -794,7 +794,7 @@ class YoutubeExtExtractor extends BaseExtractor {
 
             return {
                 stream:        ffmpegProcess.stdout,
-                type:          StreamType.Opus,
+                type:          StreamType.OggOpus, // ⬅️ CAMBIO CRÍTICO: De Opus a OggOpus
                 highWaterMark: 1 << 18, // 256KB — NO usar 8MB, causaría burst en VM
             };
 
