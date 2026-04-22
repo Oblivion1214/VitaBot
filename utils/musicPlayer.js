@@ -810,8 +810,16 @@ class YoutubeExtExtractor extends BaseExtractor {
             const ytdlpArgs = [
                 '--no-warnings',
                 '--no-check-certificates',
-                '--format', 'bestaudio[ext=webm][acodec=opus]/bestaudio',
-                '--output', '-',   // escribe a stdout
+                '--no-playlist',
+                // Forzamos un formato específico que suele ser más estable
+                '--format', 'bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio', 
+                // Bajamos a 1 solo hilo de descarga para evitar que YouTube nos corte la conexión
+                '--concurrent-fragments', '1', 
+                '--retries', '10',
+                '--socket-timeout', '30',
+                // Añadimos un User-Agent de navegador real para reducir sospechas
+                '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                '--output', '-',
                 cleanUrl
             ];
 
@@ -839,15 +847,19 @@ class YoutubeExtExtractor extends BaseExtractor {
             // FFmpeg lee desde stdin (pipe) en lugar de una URL HTTP
             const ffmpegArgs = [
                 '-loglevel',  'warning',
-                '-i',         'pipe:0',   // lee desde stdin
+                '-analyzeduration', '0',
+                '-probesize', '32k',
+                '-fflags',    '+discardcorrupt+genpts+nobuffer+igndts+flush_packets',
+                '-i',         'pipe:0',           // ← input termina aquí
                 '-vn',
-                '-af',        'dynaudnorm=f=150:g=15:p=0.95',
-                '-c:a',       'libopus',
-                '-ar',        '48000',
-                '-ac',        '2',
-                '-b:a',       `${targetBitrate}k`,
-                '-f',         'opus',
-                'pipe:1'      // escribe a stdout
+                '-max_muxing_queue_size', '4096', // ← output options van DESPUÉS del -i
+                '-af',   'dynaudnorm=f=150:g=15:p=0.95',
+                '-c:a',  'libopus',
+                '-ar',   '48000',
+                '-ac',   '2',
+                '-b:a',  `${targetBitrate}k`,
+                '-f',    'opus',
+                'pipe:1'
             ];
 
             const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, {
@@ -913,11 +925,23 @@ class YoutubeExtExtractor extends BaseExtractor {
             ffmpegProcess.stderr.on('data', (data) => {
                 const msg = data.toString().trim();
                 if (!msg) return;
-                const esError = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('invalid');
+                
+                // Filtrar spam de errores AAC — son normales con +discardcorrupt
+                const esSpamAAC = msg.includes('[aac @') || 
+                                msg.includes('aist#0') ||
+                                msg.includes('dec:aac');
+                if (esSpamAAC) return; // silenciar completamente
+
+                const esSpamDTS = msg.includes('Non-monotonic DTS') || 
+                  msg.includes('Queue input is backward') ||
+                  msg.includes('invalid as first byte of an EBML');
+                if (esSpamDTS) return; // silenciar completamente
+                
+                const esError   = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('invalid');
                 const esWarning = msg.toLowerCase().includes('warning');
-                if (esError) console.error(`[FFmpeg:${ffmpegProcess.pid}] 🔴 ${msg}`);
+                if (esError)        console.error(`[FFmpeg:${ffmpegProcess.pid}] 🔴 ${msg}`);
                 else if (esWarning) console.warn(`[FFmpeg:${ffmpegProcess.pid}] ⚠️ ${msg}`);
-                else console.log(`[FFmpeg:${ffmpegProcess.pid}] ${msg}`);
+                else                console.log(`[FFmpeg:${ffmpegProcess.pid}] ${msg}`);
             });
 
             ffmpegProcess.on('close', (code, signal) => {
@@ -946,7 +970,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                     ytdlpProcess.kill('SIGKILL');
                     ffmpegProcess.kill('SIGKILL');
                 }
-            }, 25000);
+            }, 60000);
             ffmpegProcess.stdout.once('data', () => {
                 clearTimeout(timeout);
                 console.log(`[STREAM] ✅ Timeout cancelado — pipeline activo`);
@@ -957,7 +981,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             return {
                 stream:        ffmpegProcess.stdout,
                 type:          StreamType.Opus,
-                highWaterMark: 1 << 20, // 1MB
+                highWaterMark: 1 << 22, // 4MB
             };
 
         } catch (e) {
