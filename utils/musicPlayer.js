@@ -77,7 +77,7 @@ function verificarPCLocal() {
                 try {
                     const json = JSON.parse(data);
                     const estadoAnterior = pcLocalDisponible;
-                    pcLocalDisponible = json.status === 'ok';
+                    pcLocalDisponible = json.available === true;
                     if (!estadoAnterior && pcLocalDisponible) {
                         console.log(`[PC-Check] ✅ PC Local ONLINE — streams activos: ${json.streamsActivos}`);
                     }
@@ -523,6 +523,11 @@ class YoutubeExtExtractor extends BaseExtractor {
         let silencioAlertado = false;
 
         return new Promise((resolve, reject) => {
+            const agent = new http.Agent({
+                keepAlive: true,
+                maxSockets: 5,
+            });
+
             const req = http.get(pcUrl, { timeout: 10_000 }, (res) => {
                 if (res.statusCode !== 200) {
                     console.error(`[STREAM:PC] 🔴 HTTP ${res.statusCode} → fallback VM`);
@@ -536,6 +541,13 @@ class YoutubeExtExtractor extends BaseExtractor {
                 }
 
                 console.log(`[STREAM:PC] ✅ Conexión establecida`);
+
+                // 🔥 NUEVO: evitar que Node pause el stream
+                    res.socket?.setNoDelay(true);
+                    res.resume();
+
+                    // 🔥 NUEVO: mantener flujo activo SIEMPRE
+                    res.on('data', () => {});
 
                 const watchdogInterval = setInterval(() => {
                     const silencioMs = Date.now() - ultimoChunkMs;
@@ -762,7 +774,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             return {
                 stream:        ffmpegProcess.stdout,
                 type:          StreamType.Opus,
-                highWaterMark: 1 << 25, // 32MB — reduce micro-cortes en VM
+                highWaterMark: 1 << 23, // 8MB — reduce micro-cortes en VM
             };
 
         } catch (e) {
