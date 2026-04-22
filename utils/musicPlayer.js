@@ -807,17 +807,20 @@ class YoutubeExtExtractor extends BaseExtractor {
             const tSpawn = Date.now();
 
             // Spawn yt-dlp escribiendo audio a stdout
+            // --- EN musicPlayer.js (~Línea 445 en adelante) ---
             const ytdlpArgs = [
                 '--no-warnings',
                 '--no-check-certificates',
                 '--no-playlist',
-                // Forzamos un formato específico que suele ser más estable
-                '--format', 'bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio', 
-                // Bajamos a 1 solo hilo de descarga para evitar que YouTube nos corte la conexión
-                '--concurrent-fragments', '1', 
+                // 1. Priorizamos el formato 251 (Opus) que es el más ligero para tu CPU
+                '--format', 'bestaudio', 
+                // 2. Usamos el cliente de iOS, que suele recibir menos restricciones en centros de datos
+                '--extractor-args', 'youtube:player_client=ios,web',
+                // 3. Mantenemos Node para resolver los desafíos de JS rápido
+                '--js-runtimes', 'node',
+                '--concurrent-fragments', '1',
                 '--retries', '10',
-                '--socket-timeout', '30',
-                // Añadimos un User-Agent de navegador real para reducir sospechas
+                // 4. Agregamos un User-Agent real para no parecer un bot genérico
                 '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 '--output', '-',
                 cleanUrl
@@ -849,12 +852,13 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-loglevel',  'warning',
                 '-analyzeduration', '0',
                 '-probesize', '32k',
-                '-fflags',    '+discardcorrupt+genpts+nobuffer+igndts+flush_packets',
-                '-i',         'pipe:0',           // ← input termina aquí
+                '-fflags',    '+discardcorrupt+genpts+nobuffer+igndts+flush_packets', 
+                '-i',         'pipe:0',
                 '-vn',
-                '-max_muxing_queue_size', '4096', // ← output options van DESPUÉS del -i
-                '-af',   'dynaudnorm=f=150:g=15:p=0.95',
-                '-c:a',  'libopus',
+                '-max_muxing_queue_size', '4096', // ⬅️ Mantenlo aquí, después del -i
+                '-acodec', 'libopus',
+                '-application', 'voip', 
+                '-compression_level', '0', 
                 '-ar',   '48000',
                 '-ac',   '2',
                 '-b:a',  `${targetBitrate}k`,
@@ -981,7 +985,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             return {
                 stream:        ffmpegProcess.stdout,
                 type:          StreamType.Opus,
-                highWaterMark: 1 << 22, // 4MB
+                highWaterMark: 1 << 23, // 8MB
             };
 
         } catch (e) {
