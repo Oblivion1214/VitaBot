@@ -533,6 +533,9 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-reconnect',           '1',
                 '-reconnect_streamed',  '1',
                 '-reconnect_delay_max', '10',
+                '-headers',          'User-Agent: Mozilla/5.0\r\n',
+                '-timeout',          '15000000',   // 15s timeout en microsegundos
+                '-rw_timeout',       '15000000',   // 15s read/write timeout
                 ...(esLive ? ['-reconnect_at_eof', '1'] : []),
                 '-probesize',           '512K',
                 '-analyzeduration',     '512K',
@@ -542,22 +545,20 @@ class YoutubeExtExtractor extends BaseExtractor {
             ];
 
             if (isOpusCopy) {
-                args.push('-c:a', 'copy', '-f', 'opus');
-                console.log(`[Audio-Engine] ✅ Modo: COPY opus nativo | Canal: ${channelBitrate}kbps | Target: ${targetBitrate}kbps | Live: ${esLive}`);
-            } else {
-                args.push(
-                    '-af',  'dynaudnorm=f=150:g=15:p=0.95',
-                    '-c:a', 'libopus',
-                    '-ar',  '48000',
-                    '-ac',  '2',
-                    '-b:a', `${targetBitrate}k`,
-                    '-f',   'opus'
-                );
-                console.log(`[Audio-Engine] 🔄 Modo: ENCODE ${targetBitrate}kbps | Canal: ${channelBitrate}kbps | Live: ${esLive}`);
+                console.log(`[Audio-Engine] ℹ️ Opus nativo detectado → forzando ENCODE para evitar throttling de YouTube`);
             }
 
+            args.push(
+                '-af',  'dynaudnorm=f=150:g=15:p=0.95',
+                '-c:a', 'libopus',
+                '-ar',  '48000',
+                '-ac',  '2',
+                '-b:a', `${targetBitrate}k`,
+                '-f',   'opus'   // ← siempre presente, sin importar isOpusCopy
+            );
+            console.log(`[Audio-Engine] 🔄 ENCODE ${targetBitrate}kbps | Canal: ${channelBitrate}kbps | Live: ${esLive} | opusNativo: ${isOpusCopy}`);
+
             args.push('pipe:1');
-            console.log(`[FFmpeg] Argumentos completos: ffmpeg ${args.join(' ').replace(audioUrl, '[URL_AUDIO]')}`);
 
             // ── 4. SPAWN FFMPEG ────────────────────────────────────────────
             const tSpawn = Date.now();
@@ -698,7 +699,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             return {
                 stream:        ffmpegProcess.stdout,
                 type:          StreamType.Opus,
-                highWaterMark: 1 << 18, // 256KB — no presiona la RAM del e2-micro
+                highWaterMark: 1 << 20, // 1MB — más colchón para absorber las pausas del throttling
             };
 
         } catch (e) {
