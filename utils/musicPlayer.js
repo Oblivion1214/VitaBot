@@ -12,6 +12,8 @@ const youtubeExt = require('youtube-ext');
 const youtubedl = require('youtube-dl-exec');
 const fs = require('fs');
 const { log, sanitizeErrorMessage } = require('./logger');
+// Detecta el binario correcto de yt-dlp según el sistema operativo
+const { execSync } = require('child_process');
 
 // ─────────────────────────────────────────────
 // DIAGNÓSTICO DEL SISTEMA — Imprime al arranque
@@ -155,6 +157,47 @@ function limpiarParaLyrics(texto, autor) {
 
     return limpio;
 }
+
+// ─────────────────────────────────────────────
+// Detecta el binario correcto de yt-dlp según el sistema operativo y la instalación
+function getYtdlpBin() {
+    // youtube-dl-exec incluye su propio binario, usarlo siempre que esté disponible
+    try {
+        const binPath = require('youtube-dl-exec').raw;
+        if (binPath && fs.existsSync(binPath)) {
+            console.log(`[yt-dlp] Usando binario de youtube-dl-exec: ${binPath}`);
+            return binPath;
+        }
+    } catch {}
+
+    // Fallback: buscar en PATH
+    try {
+        const which = os.platform() === 'win32' ? 'where yt-dlp' : 'which yt-dlp';
+        const bin = execSync(which, { stdio: 'pipe' }).toString().trim().split('\n')[0];
+        console.log(`[yt-dlp] Binario encontrado en PATH: ${bin}`);
+        return bin;
+    } catch {}
+
+    // Último recurso: nombre genérico (funciona si está en PATH en Linux)
+    return os.platform() === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+}
+
+const YTDLP_BIN = getYtdlpBin();
+
+// Verificación de dependencias al arrancar
+(async () => {
+    try {
+        const { execFileSync } = require('child_process');
+        const version = execFileSync(YTDLP_BIN, ['--version'], { stdio: 'pipe' }).toString().trim();
+        console.log(`[yt-dlp] ✅ Versión detectada: ${version}`);
+    } catch (e) {
+        console.error(`[yt-dlp] 🔴 BINARIO NO ENCONTRADO: ${YTDLP_BIN}`);
+        console.error(`[yt-dlp]    En Windows: instala con "winget install yt-dlp" o "pip install yt-dlp"`);
+        console.error(`[yt-dlp]    En Linux:   sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod +x /usr/local/bin/yt-dlp`);
+    }
+})();
+// ─────────────────────────────────────────────
+
 
 // ─────────────────────────────────────────────
 // HELPER: Construir un Track desde datos de video
@@ -422,6 +465,7 @@ class YoutubeExtExtractor extends BaseExtractor {
     // ─────────────────────────────────────────────
     // STREAM — Motor Hi-Fi con logs de diagnóstico
     // ─────────────────────────────────────────────
+    /*
     async stream(track) {
         const t0 = Date.now();
         const trackLabel = `"${track.title?.slice(0, 50) || 'sin título'}"`;
@@ -705,6 +749,220 @@ class YoutubeExtExtractor extends BaseExtractor {
         } catch (e) {
             streamsActivos = Math.max(0, streamsActivos - 1);
             console.error(`[YoutubeExt stream] 🔴 ERROR CRÍTICO: ${e.message}`);
+            logSistema('STREAM_CRITICAL_ERROR');
+            throw e;
+        }
+    }*/
+    async stream(track) {
+        const t0 = Date.now();
+        const trackLabel = `"${track.title?.slice(0, 50) || 'sin título'}"`;
+
+        console.log(`\n╔══════════════════════════════════════════════════════════`);
+        console.log(`║ [STREAM] ▶ Iniciando stream de ${trackLabel}`);
+        console.log(`╚══════════════════════════════════════════════════════════`);
+        logSistema('STREAM_START');
+
+        streamsActivos++;
+        if (streamsActivos > 1) {
+            console.warn(`⚠️  [STREAM] ${streamsActivos} streams activos simultáneamente.`);
+        }
+
+        try {
+            const cleanUrl = cleanYoutubeUrl(track.url);
+            if (!cleanUrl) throw new Error('URL no permitida o malformada');
+
+            // ── BITRATE DEL CANAL ──────────────────────────────────────────────
+            let channelBitrate = 96;
+            let channelName = 'desconocido';
+            try {
+                const guildId = track.metadata?.guildId || track.queue?.metadata?.guildId;
+                const guild = this.context.player.client.guilds.cache.get(guildId);
+                const voiceChannelId = guild?.members.me?.voice.channelId;
+                if (voiceChannelId) {
+                    const freshChannel = await this.context.player.client.channels.fetch(voiceChannelId, { force: true });
+                    if (freshChannel?.bitrate) {
+                        channelBitrate = freshChannel.bitrate / 1000;
+                        channelName = freshChannel.name || channelName;
+                    }
+                }
+                console.log(`[STREAM] Canal de voz: "${channelName}" | Bitrate real: ${channelBitrate}kbps`);
+            } catch (e) {
+                console.warn(`[STREAM] ⚠️ Error al leer bitrate: ${e.message} → fallback 96k`);
+            }
+
+            const targetBitrate = channelBitrate <= 96  ? 96
+                                : channelBitrate <= 256 ? channelBitrate
+                                : 256;
+            console.log(`[STREAM] Target bitrate: ${targetBitrate}kbps`);
+
+            const esLive = track.live || false;
+
+            // ── YTDLP → stdout → FFmpeg stdin ──────────────────────────────────
+            // En lugar de extraer la URL y pasársela a FFmpeg (donde YouTube
+            // throttlea el HTTP), dejamos que yt-dlp descargue y escriba a su
+            // stdout, y FFmpeg lee desde su stdin. Así yt-dlp maneja la
+            // conexión con YouTube (con su lógica de reintentos y throttling)
+            // y FFmpeg solo se encarga de encodear lo que recibe.
+            console.log(`[STREAM] Iniciando pipeline yt-dlp → FFmpeg (sin URL directa)`);
+            const tSpawn = Date.now();
+
+            // Spawn yt-dlp escribiendo audio a stdout
+            const ytdlpArgs = [
+                '--no-warnings',
+                '--no-check-certificates',
+                '--format', 'bestaudio[ext=webm][acodec=opus]/bestaudio',
+                '--output', '-',   // escribe a stdout
+                cleanUrl
+            ];
+
+            // Agrega cookie si está disponible
+            if (youtubeCookie) {
+                const cookieNetscape = path.join(__dirname, '../config/youtube-cookie.txt');
+                const cookieJson     = path.join(__dirname, '../config/youtube-cookie.json');
+
+                if (fs.existsSync(cookieNetscape)) {
+                    ytdlpArgs.unshift('--cookies', cookieNetscape);
+                    console.log(`[yt-dlp] 🍪 Cookie Netscape cargada: ${cookieNetscape}`);
+                } else if (fs.existsSync(cookieJson)) {
+                    console.warn(`[yt-dlp] ⚠️ Solo existe youtube-cookie.json — yt-dlp necesita formato Netscape (.txt)`);
+                    console.warn(`[yt-dlp]    Convierte con el script de conversión y reinicia el bot`);
+                    // No pasar cookie — yt-dlp intentará sin autenticación
+                }
+            }
+
+            console.log(`[yt-dlp] Argumentos: yt-dlp ${ytdlpArgs.filter(a => !a.includes('cookie')).join(' ')}`);
+
+            const ytdlpProcess = spawn(YTDLP_BIN, ytdlpArgs, {
+                stdio: ['ignore', 'pipe', 'pipe']
+            });
+
+            // FFmpeg lee desde stdin (pipe) en lugar de una URL HTTP
+            const ffmpegArgs = [
+                '-loglevel',  'warning',
+                '-i',         'pipe:0',   // lee desde stdin
+                '-vn',
+                '-af',        'dynaudnorm=f=150:g=15:p=0.95',
+                '-c:a',       'libopus',
+                '-ar',        '48000',
+                '-ac',        '2',
+                '-b:a',       `${targetBitrate}k`,
+                '-f',         'opus',
+                'pipe:1'      // escribe a stdout
+            ];
+
+            const ffmpegProcess = spawn('ffmpeg', ffmpegArgs, {
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+
+            const pid = `ytdlp:${ytdlpProcess.pid}/ffmpeg:${ffmpegProcess.pid}`;
+            console.log(`[STREAM] 🚀 Pipeline iniciado | PIDs: ${pid} | Streams activos: ${streamsActivos}`);
+
+            // Conectar stdout de yt-dlp → stdin de FFmpeg
+            ytdlpProcess.stdout.pipe(ffmpegProcess.stdin);
+
+            // Si yt-dlp termina con error, destruimos el pipe de FFmpeg
+            ytdlpProcess.on('close', (code) => {
+                if (code !== 0 && code !== null) {
+                    console.error(`[yt-dlp:PID:${ytdlpProcess.pid}] ⚠️ Terminó con código ${code}`);
+                } else {
+                    console.log(`[yt-dlp:PID:${ytdlpProcess.pid}] ✅ Descarga completa (código ${code})`);
+                }
+                // Cerrar stdin de FFmpeg para que sepa que no hay más datos
+                ffmpegProcess.stdin.end();
+            });
+
+            ytdlpProcess.stderr.on('data', (data) => {
+                const msg = data.toString().trim();
+                if (msg) console.log(`[yt-dlp:PID:${ytdlpProcess.pid}] ${msg}`);
+            });
+
+            // ── Monitoreo FFmpeg ───────────────────────────────────────────────
+            let bytesEmitidos = 0;
+            let primerDatoMs = null;
+            let ultimoChunkMs = Date.now();
+            let silencioAlertado = false;
+
+            const watchdogInterval = setInterval(() => {
+                const silencioMs = Date.now() - ultimoChunkMs;
+                const ramLibre = os.freemem();
+                const load = os.loadavg()[0];
+
+                if (silencioMs > 3000 && !silencioAlertado) {
+                    silencioAlertado = true;
+                    console.warn(`\n⚠️  [WATCHDOG:${pid}] SILENCIO DE AUDIO`);
+                    console.warn(`   Sin datos: ${(silencioMs / 1000).toFixed(1)}s | RAM: ${(ramLibre / 1024 / 1024).toFixed(1)} MB | CPU: ${load.toFixed(2)}`);
+                    console.warn(`   Bytes emitidos: ${(bytesEmitidos / 1024).toFixed(1)} KB`);
+                } else if (silencioMs <= 3000 && silencioAlertado) {
+                    silencioAlertado = false;
+                    console.log(`[WATCHDOG:${pid}] ✅ Audio reanudado`);
+                }
+            }, 1000);
+
+            ffmpegProcess.stdout.on('data', (chunk) => {
+                bytesEmitidos += chunk.length;
+                ultimoChunkMs = Date.now();
+                if (!primerDatoMs) {
+                    primerDatoMs = Date.now();
+                    console.log(`[FFmpeg] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
+                }
+                if (bytesEmitidos % (1024 * 1024) < chunk.length) {
+                    console.log(`[FFmpeg] 📊 ${(bytesEmitidos / 1024 / 1024).toFixed(1)} MB emitidos | RAM: ${(os.freemem() / 1024 / 1024).toFixed(1)} MB | CPU: ${os.loadavg()[0].toFixed(2)}`);
+                }
+            });
+
+            ffmpegProcess.stderr.on('data', (data) => {
+                const msg = data.toString().trim();
+                if (!msg) return;
+                const esError = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('invalid');
+                const esWarning = msg.toLowerCase().includes('warning');
+                if (esError) console.error(`[FFmpeg:${ffmpegProcess.pid}] 🔴 ${msg}`);
+                else if (esWarning) console.warn(`[FFmpeg:${ffmpegProcess.pid}] ⚠️ ${msg}`);
+                else console.log(`[FFmpeg:${ffmpegProcess.pid}] ${msg}`);
+            });
+
+            ffmpegProcess.on('close', (code, signal) => {
+                streamsActivos = Math.max(0, streamsActivos - 1);
+                clearInterval(watchdogInterval);
+                // Asegura que yt-dlp también muera si FFmpeg cierra primero
+                if (!ytdlpProcess.killed) ytdlpProcess.kill('SIGKILL');
+
+                console.log(`\n[FFmpeg:${ffmpegProcess.pid}] ⏹ Cerrado | código: ${code} | señal: ${signal || 'ninguna'}`);
+                console.log(`   Duración: ${((Date.now() - tSpawn) / 1000).toFixed(1)}s | Emitidos: ${(bytesEmitidos / 1024).toFixed(1)} KB`);
+                console.log(`   Primer chunk: ${primerDatoMs ? (primerDatoMs - tSpawn) + 'ms' : 'nunca'} | Streams activos: ${streamsActivos}`);
+                logSistema('STREAM_END');
+            });
+
+            ffmpegProcess.on('error', (err) => {
+                streamsActivos = Math.max(0, streamsActivos - 1);
+                clearInterval(watchdogInterval);
+                if (!ytdlpProcess.killed) ytdlpProcess.kill('SIGKILL');
+                console.error(`[FFmpeg] 🔴 Error de spawn: ${err.message}`);
+            });
+
+            // Timeout: si no llega ningún chunk en 25s algo salió muy mal
+            const timeout = setTimeout(() => {
+                if (!ffmpegProcess.killed) {
+                    console.warn(`[STREAM] ⚠️ Timeout 25s sin audio — matando pipeline`);
+                    ytdlpProcess.kill('SIGKILL');
+                    ffmpegProcess.kill('SIGKILL');
+                }
+            }, 25000);
+            ffmpegProcess.stdout.once('data', () => {
+                clearTimeout(timeout);
+                console.log(`[STREAM] ✅ Timeout cancelado — pipeline activo`);
+            });
+
+            console.log(`[STREAM] ✅ Pipeline listo. Preparación: ${Date.now() - t0}ms`);
+
+            return {
+                stream:        ffmpegProcess.stdout,
+                type:          StreamType.Opus,
+                highWaterMark: 1 << 20, // 1MB
+            };
+
+        } catch (e) {
+            streamsActivos = Math.max(0, streamsActivos - 1);
+            console.error(`[STREAM] 🔴 ERROR CRÍTICO: ${e.message}`);
             logSistema('STREAM_CRITICAL_ERROR');
             throw e;
         }
