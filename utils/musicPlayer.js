@@ -471,9 +471,6 @@ class YoutubeExtExtractor extends BaseExtractor {
     async _streamDesdePC(cleanUrl, targetBitrate, t0) {
         const pcUrl = `${PC_STREAM_BASE}?url=${encodeURIComponent(cleanUrl)}&bitrate=${targetBitrate}`;
         console.log(`[STREAM:PC] 🏠 Conectando → ${PC_AUDIO_HOST}:${PC_AUDIO_PORT}`);
-        
-        const { Readable } = require('stream');
-        const tSpawn = Date.now();
 
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
@@ -485,41 +482,29 @@ class YoutubeExtExtractor extends BaseExtractor {
                     return;
                 }
 
-                console.log(`[STREAM:PC] ✅ Conexión HTTP. Descargando a RAM Pura...`);
-                const chunks = [];
+                console.log(`[STREAM:PC] ✅ Conexión HTTP. Entregando stream puro a Discord...`);
 
-                // Guardamos los datos a máxima velocidad en la RAM
-                res.on('data', (chunk) => chunks.push(chunk));
+                // 🌟 LA MAGIA PURISTA: CERO INTERMEDIARIOS
+                // Le pasamos la respuesta de red (res) directamente a Discord.
+                // Sin espías, sin arreglos, sin discos duros.
+                resolve({ stream: res, type: StreamType.OggOpus });
+            });
 
-                const timeoutArranque = setTimeout(() => {
-                    console.warn(`[STREAM:PC] ⚠️ Timeout 45s descargando → VM fallback`);
-                    req.destroy();
-                    pcLocalDisponible = false;
-                    this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
-                }, 45_000);
-
-                // ¡La descarga terminó!
-                res.on('end', () => {
-                    clearTimeout(timeoutArranque);
-                    const fullBuffer = Buffer.concat(chunks);
-                    const mb = (fullBuffer.length / 1024 / 1024).toFixed(2);
-                    console.log(`[STREAM:PC] ✅ Descarga RAM completada | ${mb} MB`);
-
-                    // 🌟 EL TRUCO MAESTRO: Dividimos el buffer gigante en "ladrillos" de 32 KB
-                    const chunkArray = [];
-                    for (let i = 0; i < fullBuffer.length; i += 32768) {
-                        chunkArray.push(fullBuffer.slice(i, i + 32768));
-                    }
-
-                    // Dejamos que el motor nativo de C++ de Node gestione la sincronía
-                    const ramStream = Readable.from(chunkArray);
-
-                    resolve({ stream: ramStream, type: StreamType.OggOpus });
-                });
+            // Blindaje de red para mantener Tailscale despierto
+            req.on('socket', (socket) => {
+                socket.setKeepAlive(true, 10000);
+                socket.setTimeout(0);
             });
 
             req.on('error', (err) => {
                 console.error(`[STREAM:PC] 🔴 Error TCP: ${err.message} → VM fallback`);
+                pcLocalDisponible = false;
+                this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                console.warn(`[STREAM:PC] ⚠️ Timeout TCP → VM fallback`);
                 pcLocalDisponible = false;
                 this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
             });
