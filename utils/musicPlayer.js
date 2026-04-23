@@ -12,7 +12,7 @@ const youtubeExt = require('youtube-ext');
 const youtubedl  = require('youtube-dl-exec');
 const fs = require('fs');
 const { log, sanitizeErrorMessage } = require('./logger');
-const { Transform } = require('stream');
+const { Transform, PassThrough } = require('stream');
 
 // ─────────────────────────────────────────────
 // CONFIGURACIÓN HÍBRIDA
@@ -494,7 +494,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 }
 
                 console.log(`[STREAM:PC] ✅ Conexión HTTP establecida con PC Local`);
-                req.setTimeout(0); // Le dice a Node: "Nunca mates esta conexión por inactividad"
+                req.setTimeout(0); // Inmortalidad de conexión
 
                 const watchdog = setInterval(() => {
                     const silencio = Date.now() - ultimoChunkMs;
@@ -507,33 +507,34 @@ class YoutubeExtExtractor extends BaseExtractor {
                     }
                 }, 1000);
 
-                // CREAMOS EL ESPÍA
-                const spyStream = new Transform({
-                    transform(chunk, encoding, callback) {
-                        highWaterMark: 1024 * 1024 * 4, // ⬅️ AÑADIR ESTO: 4 MB de búfer interno
-                        bytesEmitidos += chunk.length;
-                        ultimoChunkMs  = Date.now();
-                        if (!primerDatoMs) {
-                            primerDatoMs = Date.now();
-                            console.log(`[STREAM:PC] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
-                            streamsActivos = Math.max(0, streamsActivos - 1);
-                        }
-                        if (bytesEmitidos % (1024 * 1024) < chunk.length) {
-                            const tasaKbps = primerDatoMs ? ((bytesEmitidos*8)/((Date.now()-primerDatoMs)/1000)/1000).toFixed(1) : '?';
-                            console.log(`[STREAM:PC] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps`);
-                        }
-                        // Pasamos el audio intacto a discord-player
-                        callback(null, chunk);
+                // 🌟 LA ASPIRADORA DE RAM: 20 MB (Succionará toda la red al instante)
+                const aspiradoraVM = new PassThrough({ highWaterMark: 1024 * 1024 * 20 });
+
+                // Conectamos la respuesta de red directamente a la aspiradora
+                res.pipe(aspiradoraVM);
+
+                // --- TUS MÉTRICAS INTACTAS CONECTADAS A LA ASPIRADORA ---
+                aspiradoraVM.on('data', (chunk) => {
+                    bytesEmitidos += chunk.length;
+                    ultimoChunkMs  = Date.now(); // Actualizamos el watchdog
+
+                    if (!primerDatoMs) {
+                        primerDatoMs = Date.now();
+                        console.log(`[STREAM:PC] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
+                    }
+
+                    if (bytesEmitidos % (1024 * 1024) < chunk.length) {
+                        const elapsedS = (Date.now() - primerDatoMs) / 1000;
+                        const tasaKbps = elapsedS > 0 ? ((bytesEmitidos*8)/elapsedS/1000).toFixed(1) : '?';
+                        console.log(`[STREAM:PC] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps`);
                     }
                 });
 
-                // Conectamos el audio entrante al espía
-                res.pipe(spyStream);
-
+                // Cuando la red termina de enviarnos la canción entera
                 res.on('end', () => {
                     clearInterval(watchdog);
                     const dur = ((Date.now() - tSpawn) / 1000).toFixed(1);
-                    console.log(`[STREAM:PC] ✅ Stream completo | ${(bytesEmitidos/1024).toFixed(1)} KB | ${dur}s`);
+                    console.log(`[STREAM:PC] ✅ Descarga a RAM completa | ${(bytesEmitidos/1024).toFixed(1)} KB | ${dur}s`);
                     logSistema('STREAM_END');
                 });
 
@@ -563,21 +564,18 @@ class YoutubeExtExtractor extends BaseExtractor {
 
                 console.log(`[STREAM:PC] ✅ Pipeline configurado. Preparación: ${Date.now() - t0}ms`);
 
+                // IMPORTANTE: Pasamos la aspiradora y NO ponemos highWaterMark extra
                 resolve({
-                    stream:        spyStream, // IMPORTANTE: Le pasamos el spyStream a discord-player, NO 'res'
-                    type:          StreamType.OggOpus, // ⬅️ CAMBIO CRÍTICO: De Opus a OggOpus
-                    highWaterMark: 1 << 18, // 256KB — NO usar 8MB, causaría burst
+                    stream:        aspiradoraVM, 
+                    type:          StreamType.OggOpus
                 });
             });
 
             // ----------------------------------------------------
-            // 2. >>> AQUÍ VA LA CONFIGURACIÓN DEL SOCKET <<<
+            // CONFIGURACIÓN DEL SOCKET (Mantiene el túnel vivo)
             // ----------------------------------------------------
-
             req.on('socket', (socket) => {
-                // Envía un paquete invisible de "sigo vivo" cada 10 segundos
                 socket.setKeepAlive(true, 10000); 
-                // Desactiva cualquier timeout del socket del sistema operativo
                 socket.setTimeout(0); 
             });
 
