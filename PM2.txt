@@ -3,6 +3,9 @@ pm2 start index.js --name vitabot
 
 //Arranque automatico
 pm2-startup install
+o
+pm2 startup
+
 
 //Guardar el estado automatico
 pm2 save
