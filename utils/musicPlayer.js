@@ -12,6 +12,7 @@ const youtubeExt = require('youtube-ext');
 const youtubedl  = require('youtube-dl-exec');
 const fs = require('fs');
 const { log, sanitizeErrorMessage } = require('./logger');
+const { Transform } = require('stream');
 
 // ─────────────────────────────────────────────
 // CONFIGURACIÓN HÍBRIDA
@@ -505,19 +506,27 @@ class YoutubeExtExtractor extends BaseExtractor {
                     }
                 }, 1000);
 
-                res.on('data', (chunk) => {
-                    bytesEmitidos += chunk.length;
-                    ultimoChunkMs  = Date.now();
-                    if (!primerDatoMs) {
-                        primerDatoMs = Date.now();
-                        console.log(`[STREAM:PC] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
-                        streamsActivos = Math.max(0, streamsActivos - 1);
-                    }
-                    if (bytesEmitidos % (1024 * 1024) < chunk.length) {
-                        const tasaKbps = primerDatoMs ? ((bytesEmitidos*8)/((Date.now()-primerDatoMs)/1000)/1000).toFixed(1) : '?';
-                        console.log(`[STREAM:PC] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps`);
+                // CREAMOS EL ESPÍA
+                const spyStream = new Transform({
+                    transform(chunk, encoding, callback) {
+                        bytesEmitidos += chunk.length;
+                        ultimoChunkMs  = Date.now();
+                        if (!primerDatoMs) {
+                            primerDatoMs = Date.now();
+                            console.log(`[STREAM:PC] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
+                            streamsActivos = Math.max(0, streamsActivos - 1);
+                        }
+                        if (bytesEmitidos % (1024 * 1024) < chunk.length) {
+                            const tasaKbps = primerDatoMs ? ((bytesEmitidos*8)/((Date.now()-primerDatoMs)/1000)/1000).toFixed(1) : '?';
+                            console.log(`[STREAM:PC] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps`);
+                        }
+                        // Pasamos el audio intacto a discord-player
+                        callback(null, chunk);
                     }
                 });
+
+                // Conectamos el audio entrante al espía
+                res.pipe(spyStream);
 
                 res.on('end', () => {
                     clearInterval(watchdog);
@@ -553,7 +562,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 console.log(`[STREAM:PC] ✅ Pipeline configurado. Preparación: ${Date.now() - t0}ms`);
 
                 resolve({
-                    stream:        res,
+                    stream:        spyStream, // IMPORTANTE: Le pasamos el spyStream a discord-player, NO 'res'
                     type:          StreamType.OggOpus, // ⬅️ CAMBIO CRÍTICO: De Opus a OggOpus
                     highWaterMark: 1 << 18, // 256KB — NO usar 8MB, causaría burst
                 });
@@ -664,7 +673,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             const bufsize  = maxrate * 2;
 
             const ffmpegArgs = [
-                '-re',                        // <--- AÑADIR ESTA LÍNEA en ambos modos (PC y VM) para simular velocidad de reproducción real y evitar bursts
+                //'-re',                        // <--- AÑADIR ESTA LÍNEA en ambos modos (PC y VM) para simular velocidad de reproducción real y evitar bursts
                 '-reconnect',             '1',
                 '-reconnect_streamed',    '1',
                 '-reconnect_delay_max',   '10',
@@ -719,19 +728,25 @@ class YoutubeExtExtractor extends BaseExtractor {
                 }
             }, 1000);
 
-            ffmpegProcess.stdout.on('data', (chunk) => {
-                bytesEmitidos += chunk.length;
-                ultimoChunkMs  = Date.now();
-                if (!primerDatoMs) {
-                    primerDatoMs = Date.now();
-                    console.log(`[STREAM:VM] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
-                    console.log(`[STREAM:VM]   Preparación total: ${primerDatoMs - t0}ms`);
-                }
-                if (bytesEmitidos % (1024 * 1024) < chunk.length) {
-                    const tasaKbps = primerDatoMs ? ((bytesEmitidos*8)/((Date.now()-primerDatoMs)/1000)/1000).toFixed(1) : '?';
-                    console.log(`[STREAM:VM] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps | RAM: ${(os.freemem()/1024/1024).toFixed(0)} MB`);
+            // CREAMOS EL ESPÍA PARA LA VM
+            const spyStream = new Transform({
+                transform(chunk, encoding, callback) {
+                    bytesEmitidos += chunk.length;
+                    ultimoChunkMs  = Date.now();
+                    if (!primerDatoMs) {
+                        primerDatoMs = Date.now();
+                        console.log(`[STREAM:VM] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
+                    }
+                    if (bytesEmitidos % (1024 * 1024) < chunk.length) {
+                        const tasaKbps = primerDatoMs ? ((bytesEmitidos*8)/((Date.now()-primerDatoMs)/1000)/1000).toFixed(1) : '?';
+                        console.log(`[STREAM:VM] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps | RAM: ${(os.freemem()/1024/1024).toFixed(0)} MB`);
+                    }
+                    callback(null, chunk);
                 }
             });
+
+            // Conectamos FFmpeg al espía
+            ffmpegProcess.stdout.pipe(spyStream);
 
             ffmpegProcess.stderr.on('data', (data) => {
                 const msg = data.toString().trim();
@@ -793,7 +808,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             });
 
             return {
-                stream:        ffmpegProcess.stdout,
+                stream:        spyStream, // SE PASA EL spyStream a discord-player, NO ffmpegProcess.stdout directamente
                 type:          StreamType.OggOpus, // ⬅️ CAMBIO CRÍTICO: De Opus a OggOpus
                 highWaterMark: 1 << 18, // 256KB — NO usar 8MB, causaría burst en VM
             };
