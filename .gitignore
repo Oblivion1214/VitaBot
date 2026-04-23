@@ -4,6 +4,7 @@
 
 # Cookies de YouTube — contienen sesión de cuenta de YouTube, NUNCA subir esto
 youtube-cookie.json
+youtube-cookie.txt
 
 # Configuración de auditoría — datos del servidor y credenciales, NUNCA subir esto
 audit-config.json
