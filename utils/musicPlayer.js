@@ -475,6 +475,7 @@ class YoutubeExtExtractor extends BaseExtractor {
         const fs = require('fs');
         const path = require('path');
         const os = require('os');
+        const { spawn } = require('child_process');
 
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
@@ -486,36 +487,45 @@ class YoutubeExtExtractor extends BaseExtractor {
                     return;
                 }
 
-                // 🌟 EL TRUCO DEL RAM-DISK (tmpfs)
-                // Usamos la memoria RAM de Linux como si fuera un disco duro.
-                // Esto nos da los streams nativos perfectos de C++ sin I/O Wait.
+                // Usamos RAM-Disk para no tocar tu disco duro lento
                 const isLinux = os.platform() === 'linux';
                 const baseDir = isLinux && fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir();
                 const tempFile = path.join(baseDir, `vita-${Date.now()}-${Math.random().toString(36).slice(2,6)}.opus`);
 
-                console.log(`[STREAM:PC] ✅ Conexión HTTP. Guardando en RAM-Disk (${baseDir})...`);
+                console.log(`[STREAM:PC] ✅ Descargando a RAM-Disk (${baseDir})...`);
 
                 const fileWriter = fs.createWriteStream(tempFile);
                 res.pipe(fileWriter);
 
-                let bytes = 0;
-                res.on('data', c => bytes += c.length);
-
-                // Esperamos 1.7 segundos a que se descargue por completo para no crear colisiones
+                // Esperamos 1.5 segundos a que la PC nos mande el archivo completo
                 fileWriter.on('finish', () => {
-                    const mb = (bytes / 1024 / 1024).toFixed(2);
-                    console.log(`[STREAM:PC] ✅ Archivo en RAM-Disk completado | ${mb} MB`);
+                    console.log(`[STREAM:PC] ✅ Archivo en RAM-Disk completado. Iniciando Metrónomo FFmpeg...`);
 
-                    // 🌟 LA MAGIA NATIVA
-                    // Leemos el archivo usando el stream de C++ del sistema operativo.
-                    // Discord.js consumirá esto a la velocidad perfecta, sin retrasos de JS.
-                    const readStream = fs.createReadStream(tempFile);
+                    // 🌟 EL METRÓNOMO PERFECTO
+                    // FFmpeg lee la RAM, NO codifica nada (-c:a copy), y regula el ritmo exacto (-re).
+                    // Esto evita el colapso de memoria de Discord.js.
+                    const ffmpegArgs = [
+                        '-re',
+                        '-i', tempFile,
+                        '-c:a', 'copy',
+                        '-loglevel', 'warning',
+                        '-f', 'opus',
+                        'pipe:1'
+                    ];
 
-                    readStream.on('close', () => {
+                    const ffmpegProc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+                    ffmpegProc.stderr.on('data', (d) => {
+                        const msg = d.toString().trim();
+                        if (msg) console.warn(`[FFmpeg:Metrónomo] ⚠️ ${msg}`);
+                    });
+
+                    ffmpegProc.on('close', () => {
                         fs.unlink(tempFile, () => console.log(`[STREAM:PC] 🗑️ Archivo RAM-Disk borrado`));
                     });
 
-                    resolve({ stream: readStream, type: StreamType.OggOpus });
+                    // Le pasamos el stream perfectamente balanceado a Discord
+                    resolve({ stream: ffmpegProc.stdout, type: StreamType.OggOpus });
                 });
 
                 fileWriter.on('error', (err) => {
