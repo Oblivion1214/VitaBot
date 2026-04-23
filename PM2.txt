@@ -13,6 +13,9 @@ pm2 status o pm2 list
 //Ver los ultimos 10 logs del bot
 pm2 logs vitabot
 
+//Borrar logs viejos
+pm2 flush
+
 //Limpiar la memoria de guardado
 pm2 cleardump
 
