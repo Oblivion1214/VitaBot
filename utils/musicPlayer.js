@@ -490,13 +490,13 @@ class YoutubeExtExtractor extends BaseExtractor {
                 const chunks = [];
                 let bytesEmitidos = 0;
 
-                // Vamos guardando la canción en pedacitos en un array en la RAM
+                // Vamos guardando la canción rapidísimo en un array en la RAM
                 res.on('data', (chunk) => {
                     chunks.push(chunk);
                     bytesEmitidos += chunk.length;
                 });
 
-                // Le damos 45s de paciencia por si el internet varía o es una canción larga
+                // Le damos 45s de paciencia por si el internet de la PC varía
                 const timeoutArranque = setTimeout(() => {
                     console.warn(`[STREAM:PC] ⚠️ Timeout 45s descargando → VM fallback`);
                     req.destroy();
@@ -504,18 +504,18 @@ class YoutubeExtExtractor extends BaseExtractor {
                     this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
                 }, 45_000);
 
-                // ¡La descarga terminó en unos segundos!
+                // ¡La descarga terminó! (Gracias al res.end() que agregaste en Windows)
                 res.on('end', () => {
                     clearTimeout(timeoutArranque);
                     const dur = ((Date.now() - tSpawn) / 1000).toFixed(1);
                     const mb = (bytesEmitidos / 1024 / 1024).toFixed(2);
                     console.log(`[STREAM:PC] ✅ Descarga a RAM completada | ${mb} MB | ${dur}s`);
                     
-                    // Fusionamos todos los pedacitos en un solo bloque sólido en RAM
+                    // Fusionamos todos los pedacitos en un solo bloque sólido
                     const fullBuffer = Buffer.concat(chunks);
                     let offset = 0;
 
-                    // 🌟 EL TANQUE ASÍNCRONO DE RAM (Evita cortes y salva el CPU)
+                    // 🌟 EL TANQUE ASÍNCRONO DE RAM (Salva el CPU)
                     const ramStream = new Readable({
                         highWaterMark: 64 * 1024,
                         read(size) {
@@ -524,8 +524,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                                 return;
                             }
                             
-                            // ¡LA MAGIA!: setImmediate rompe el procesamiento síncrono.
-                            // Le entrega un pedacito a Discord y deja respirar al CPU por 1 milisegundo.
+                            // setImmediate le entrega un pedacito a Discord y deja respirar al CPU
                             setImmediate(() => {
                                 const chunkSize = Math.min(size || 16384, fullBuffer.length - offset);
                                 const chunk = fullBuffer.slice(offset, offset + chunkSize);
@@ -535,7 +534,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                         }
                     });
 
-                    // Le entregamos este flujo mágico a Discord
+                    // Le entregamos este flujo perfecto a Discord
                     resolve({ stream: ramStream, type: StreamType.OggOpus });
                 });
             });
