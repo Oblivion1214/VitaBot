@@ -569,6 +569,17 @@ class YoutubeExtExtractor extends BaseExtractor {
                 });
             });
 
+            // ----------------------------------------------------
+            // 2. >>> AQUÍ VA LA CONFIGURACIÓN DEL SOCKET <<<
+            // ----------------------------------------------------
+
+            req.on('socket', (socket) => {
+                // Envía un paquete invisible de "sigo vivo" cada 10 segundos
+                socket.setKeepAlive(true, 10000); 
+                // Desactiva cualquier timeout del socket del sistema operativo
+                socket.setTimeout(0); 
+            });
+
             req.on('error', (err) => {
                 console.error(`[STREAM:PC] 🔴 Error de conexión TCP: ${err.code} — ${err.message} → VM fallback`);
                 pcLocalDisponible    = false;
