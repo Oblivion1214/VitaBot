@@ -4,6 +4,7 @@
 
 # Cookies de YouTube — contienen sesión de cuenta de YouTube, NUNCA subir esto
 youtube-cookie.json
+config/youtube-cookie.txt
 
 # Configuración de auditoría — datos del servidor y credenciales, NUNCA subir esto
 audit-config.json
@@ -20,3 +21,6 @@ Thumbs.db
 
 # Archivos de prueba y desarrollo
 check.js
+
+# Server de audio local para pruebas, NUNCA subir esto
+audioServer.js

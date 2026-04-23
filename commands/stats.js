@@ -38,7 +38,7 @@ module.exports = {
                     { name: '🤖 RAM de VitaBot', value: `\`${memBot.toFixed(2)} MB\``, inline: true },
                     { name: '⏱️ Uptime del Bot', value: `\`${formatUptime(uptimeBot)}\``, inline: true },
                     { name: '📡 Latencia', value: `\`${interaction.client.ws.ping}ms\``, inline: true },
-                    { name: '📦 Versiones', value: `\`Node: ${process.version}\`\n\`Discord.js: v14.x\``, inline: true }
+                    { name: '📦 Versiones', value: `\`Node: ${process.version}\`\n\`Discord.js: v15.x\``, inline: true }
                 )
                 .setFooter({ text: `Consultado por: ${interaction.user.tag} 🔨` })
                 .setTimestamp();
