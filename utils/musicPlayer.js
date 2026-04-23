@@ -475,61 +475,46 @@ class YoutubeExtExtractor extends BaseExtractor {
         const fs = require('fs');
         const path = require('path');
         const os = require('os');
-        const { spawn } = require('child_process');
 
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
                 if (res.statusCode !== 200) {
-                    console.error(`[STREAM:PC] 🔴 HTTP ${res.statusCode} → fallback a VM`);
                     pcLocalDisponible = false;
                     req.destroy();
-                    this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
-                    return;
+                    return this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
                 }
 
-                // Usamos RAM-Disk para no tocar tu disco duro lento
-                const isLinux = os.platform() === 'linux';
-                const baseDir = isLinux && fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir();
+                // Usamos la RAM (tmpfs) de Linux para no tocar tu disco lento
+                const baseDir = os.platform() === 'linux' && fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir();
                 const tempFile = path.join(baseDir, `vita-${Date.now()}-${Math.random().toString(36).slice(2,6)}.opus`);
 
                 console.log(`[STREAM:PC] ✅ Descargando a RAM-Disk (${baseDir})...`);
-
                 const fileWriter = fs.createWriteStream(tempFile);
                 res.pipe(fileWriter);
 
-                // Esperamos 1.5 segundos a que la PC nos mande el archivo completo
+                // Esperamos un par de segundos a que tu PC mande el archivo entero
                 fileWriter.on('finish', () => {
-                    console.log(`[STREAM:PC] ✅ Archivo en RAM-Disk completado. Iniciando Metrónomo FFmpeg...`);
+                    console.log(`[STREAM:PC] ✅ Archivo en memoria. Protegiendo stream...`);
+                    
+                    // Leemos el archivo en pedacitos pequeños (16KB) para no ahogar la RAM
+                    const readStream = fs.createReadStream(tempFile, { highWaterMark: 16384 });
 
-                    // 🌟 EL METRÓNOMO PERFECTO
-                    // FFmpeg lee la RAM, NO codifica nada (-c:a copy), y regula el ritmo exacto (-re).
-                    // Esto evita el colapso de memoria de Discord.js.
-                    const ffmpegArgs = [
-                        '-re',
-                        '-i', tempFile,
-                        '-c:a', 'copy',
-                        '-loglevel', 'warning',
-                        '-f', 'opus',
-                        'pipe:1'
-                    ];
-
-                    const ffmpegProc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-                    ffmpegProc.stderr.on('data', (d) => {
-                        const msg = d.toString().trim();
-                        if (msg) console.warn(`[FFmpeg:Metrónomo] ⚠️ ${msg}`);
+                    readStream.on('close', () => {
+                        fs.unlink(tempFile, () => console.log(`[STREAM:PC] 🗑️ RAM-Disk liberado`));
                     });
 
-                    ffmpegProc.on('close', () => {
-                        fs.unlink(tempFile, () => console.log(`[STREAM:PC] 🗑️ Archivo RAM-Disk borrado`));
+                    // 🌟 EL COLCHÓN ANTIBALAS
+                    // Le ordenamos a Discord que guarde 1 Megabyte entero por adelantado.
+                    // Si Genius (u otro proceso) bloquea la CPU, Discord no se cortará.
+                    resolve({ 
+                        stream: readStream, 
+                        type: StreamType.OggOpus,
+                        highWaterMark: 1024 * 1024 
                     });
-
-                    // Le pasamos el stream perfectamente balanceado a Discord
-                    resolve({ stream: ffmpegProc.stdout, type: StreamType.OggOpus });
                 });
 
                 fileWriter.on('error', (err) => {
-                    console.error(`[STREAM:PC] 🔴 Error en RAM-Disk: ${err.message}`);
+                    console.error(`[STREAM:PC] 🔴 Error: ${err.message}`);
                     req.destroy();
                     this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
                 });
