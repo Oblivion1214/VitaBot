@@ -472,6 +472,8 @@ class YoutubeExtExtractor extends BaseExtractor {
         const pcUrl = `${PC_STREAM_BASE}?url=${encodeURIComponent(cleanUrl)}&bitrate=${targetBitrate}`;
         console.log(`[STREAM:PC] 🏠 Conectando → ${PC_AUDIO_HOST}:${PC_AUDIO_PORT}`);
 
+        const { PassThrough } = require('stream');
+
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
                 if (res.statusCode !== 200) {
@@ -482,18 +484,34 @@ class YoutubeExtExtractor extends BaseExtractor {
                     return;
                 }
 
-                console.log(`[STREAM:PC] ✅ Conexión HTTP. Entregando stream puro a Discord...`);
+                console.log(`[STREAM:PC] ✅ Conexión HTTP. Absorbiendo audio a la RAM...`);
 
-                // 🌟 LA MAGIA PURISTA: CERO INTERMEDIARIOS
-                // Le pasamos la respuesta de red (res) directamente a Discord.
-                // Sin espías, sin arreglos, sin discos duros.
-                resolve({ stream: res, type: StreamType.OggOpus });
-            });
+                // 🌟 EL BÚFER MÁGICO DE RAM (Anti-Timeouts de Tailscale)
+                // Al darle 20 MB de capacidad, la VM se traga la canción entera
+                // por la red a máxima velocidad en lugar de ir gotita a gotita.
+                const ramBuffer = new PassThrough({ 
+                    highWaterMark: 20 * 1024 * 1024 
+                });
 
-            // Blindaje de red para mantener Tailscale despierto
-            req.on('socket', (socket) => {
-                socket.setKeepAlive(true, 10000);
-                socket.setTimeout(0);
+                // Conectamos la red directo al búfer
+                res.pipe(ramBuffer);
+
+                // Monitoreo silencioso para saber cuándo terminó de succionar
+                const tSpawn = Date.now();
+                let bytesRecibidos = 0;
+
+                res.on('data', (chunk) => {
+                    bytesRecibidos += chunk.length;
+                });
+
+                res.on('end', () => {
+                    const dur = ((Date.now() - tSpawn) / 1000).toFixed(1);
+                    const mb = (bytesRecibidos / 1024 / 1024).toFixed(2);
+                    console.log(`[STREAM:PC] ✅ Descarga a RAM de VM completada | ${mb} MB | ${dur}s`);
+                });
+
+                // Le entregamos este búfer nativo a Discord
+                resolve({ stream: ramBuffer, type: StreamType.OggOpus });
             });
 
             req.on('error', (err) => {
