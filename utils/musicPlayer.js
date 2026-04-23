@@ -486,15 +486,10 @@ class YoutubeExtExtractor extends BaseExtractor {
                 }
 
                 console.log(`[STREAM:PC] ✅ Conexión HTTP. Descargando a RAM Pura...`);
-
                 const chunks = [];
-                let bytesEmitidos = 0;
 
-                // Almacenamos la canción a máxima velocidad
-                res.on('data', (chunk) => {
-                    chunks.push(chunk);
-                    bytesEmitidos += chunk.length;
-                });
+                // Guardamos los datos a máxima velocidad en la RAM
+                res.on('data', (chunk) => chunks.push(chunk));
 
                 const timeoutArranque = setTimeout(() => {
                     console.warn(`[STREAM:PC] ⚠️ Timeout 45s descargando → VM fallback`);
@@ -503,38 +498,22 @@ class YoutubeExtExtractor extends BaseExtractor {
                     this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
                 }, 45_000);
 
-                // ¡Descarga completada! (Normalmente en 2 a 5 segundos)
+                // ¡La descarga terminó!
                 res.on('end', () => {
                     clearTimeout(timeoutArranque);
-                    const dur = ((Date.now() - tSpawn) / 1000).toFixed(1);
-                    const mb = (bytesEmitidos / 1024 / 1024).toFixed(2);
-                    console.log(`[STREAM:PC] ✅ Descarga a RAM completada | ${mb} MB | ${dur}s`);
-                    
-                    // Juntamos toda la canción en un solo bloque en RAM
                     const fullBuffer = Buffer.concat(chunks);
-                    let offset = 0;
+                    const mb = (fullBuffer.length / 1024 / 1024).toFixed(2);
+                    console.log(`[STREAM:PC] ✅ Descarga RAM completada | ${mb} MB`);
 
-                    // 🌟 EL TANQUE SÍNCRONO (Sin retrasos)
-                    const ramStream = new Readable({
-                        highWaterMark: 64 * 1024,
-                        read(size) {
-                            if (offset >= fullBuffer.length) {
-                                this.push(null); // Fin de la canción
-                                return;
-                            }
-                            
-                            // ¡LA MAGIA!: Entregamos los datos inmediatamente, sin "setImmediate".
-                            // Esto evita que Discord pierda frames de audio por culpa de NodeJS.
-                            const chunkToRead = size || 32768; // 32 KB por petición
-                            const chunkSize = Math.min(chunkToRead, fullBuffer.length - offset);
-                            const chunk = fullBuffer.slice(offset, offset + chunkSize);
-                            offset += chunkSize;
-                            
-                            this.push(chunk); // Síncrono y perfecto
-                        }
-                    });
+                    // 🌟 EL TRUCO MAESTRO: Dividimos el buffer gigante en "ladrillos" de 32 KB
+                    const chunkArray = [];
+                    for (let i = 0; i < fullBuffer.length; i += 32768) {
+                        chunkArray.push(fullBuffer.slice(i, i + 32768));
+                    }
 
-                    // Le entregamos este flujo impecable a Discord
+                    // Dejamos que el motor nativo de C++ de Node gestione la sincronía
+                    const ramStream = Readable.from(chunkArray);
+
                     resolve({ stream: ramStream, type: StreamType.OggOpus });
                 });
             });
