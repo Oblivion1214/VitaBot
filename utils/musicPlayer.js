@@ -11,7 +11,6 @@ const { StreamType } = require('@discordjs/voice');
 const { spawn, execSync } = require('child_process');
 const youtubeExt = require('youtube-ext');
 const youtubedl  = require('youtube-dl-exec');
-const fs = require('fs');
 const { log, sanitizeErrorMessage } = require('./logger');
 const { Transform, PassThrough } = require('stream');
 
