@@ -510,6 +510,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 // CREAMOS EL ESPÍA
                 const spyStream = new Transform({
                     transform(chunk, encoding, callback) {
+                        highWaterMark: 1024 * 1024 * 4, // ⬅️ AÑADIR ESTO: 4 MB de búfer interno
                         bytesEmitidos += chunk.length;
                         ultimoChunkMs  = Date.now();
                         if (!primerDatoMs) {
@@ -703,8 +704,8 @@ class YoutubeExtExtractor extends BaseExtractor {
                 '-ac',                    '2',
                 '-b:a',                   `${targetBitrate}k`,
                 // CONTROL DE VELOCIDAD — igual que en audioServer
-                '-maxrate',               `${maxrate}k`,
-                '-bufsize',               `${bufsize}k`,
+                //'-maxrate',               `${maxrate}k`,
+                //'-bufsize',               `${bufsize}k`,
                 '-f',                     'opus',
                 'pipe:1',
             ];
@@ -742,6 +743,7 @@ class YoutubeExtExtractor extends BaseExtractor {
 
             // CREAMOS EL ESPÍA PARA LA VM
             const spyStream = new Transform({
+                highWaterMark: 1024 * 1024 * 4, // ⬅️ AÑADIR ESTO: 4 MB de búfer interno
                 transform(chunk, encoding, callback) {
                     bytesEmitidos += chunk.length;
                     ultimoChunkMs  = Date.now();
