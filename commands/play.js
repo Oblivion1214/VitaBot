@@ -1,4 +1,5 @@
 // commands/play.js — Sistema de Selección de Alta Fidelidad
+const http = require('http'); // ⬅️ AÑADE ESTA LÍNEA AQUÍ
 const { 
     SlashCommandBuilder, 
     MessageFlags, 
@@ -8,7 +9,7 @@ const {
 } = require('discord.js');
 const { useMainPlayer } = require('discord-player');
 const { log, sanitizeErrorMessage } = require('../utils/logger');
-const decirCmd = require('./decir.js'); //
+const decirCmd = require('./decir.js'); // Importamos para gestionar conexiones TTS y evitar conflictos
 
 module.exports = {
     cooldown: 5,
@@ -119,70 +120,115 @@ module.exports = {
     },
 };
 
-// FUNCIÓN AUXILIAR REFORZADA Y UNIFICADA
+// ─────────────────────────────────────────────────────────────────
+// EL ENRUTADOR INTELIGENTE (Decide si usar PC o VM Fallback)
+// ─────────────────────────────────────────────────────────────────
 async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, player) {
     try {
-        // 1. DISPARAR LA REPRODUCCIÓN
-        const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
-            nodeOptions: {
-                metadata: { canal: interaction.channel, guildId: interaction.guildId },
-                leaveOnEmpty: true,
-                leaveOnEmptyCooldown: 5000,
-                leaveOnEnd: true,
-                volume: 40,
-                selfDeaf: true
-            }
-        });
-
-        // 2. DETECCIÓN CORRECTA: distinguir entre Track individual, resultado de búsqueda y playlist
-        // - Si viene del menú de selección o de player.search(), puede ser un objeto Track directamente
-        // - Si viene de un link directo, puede ser { playlist, tracks }
+        // 1. Extraer datos de lo que vamos a reproducir (Track o Playlist)
         const esPlaylist = !!(entidadAReproducir?.playlist);
-        const esTrackDirecto = typeof entidadAReproducir?.url === 'string'; // objeto Track puro
-
-        let cantidadPistas, nombreAMostrar, autorAMostrar;
+        let urlParaPC = '';
+        let trackTitle = '';
+        let trackAuthor = '';
+        let cantidadPistas = 1;
 
         if (esPlaylist) {
-            cantidadPistas = entidadAReproducir.tracks?.length ?? 1;
-            nombreAMostrar = `la playlist **${entidadAReproducir.playlist.title}**`;
-            autorAMostrar  = entidadAReproducir.playlist.author?.name || 'YouTube';
-        } else {
-            // Track individual (del menú o link directo)
-            cantidadPistas = 1;
-            nombreAMostrar = `**${track.title}**`;
-            autorAMostrar  = track.author;
+            urlParaPC = entidadAReproducir.playlist.url;
+            trackTitle = entidadAReproducir.playlist.title;
+            trackAuthor = entidadAReproducir.playlist.author?.name || 'YouTube';
+            cantidadPistas = entidadAReproducir.tracks?.length || 1;
+        } else if (entidadAReproducir.tracks && entidadAReproducir.tracks.length > 0) {
+            urlParaPC = entidadAReproducir.tracks[0].url;
+            trackTitle = entidadAReproducir.tracks[0].title;
+            trackAuthor = entidadAReproducir.tracks[0].author;
+        } else if (entidadAReproducir.url) {
+            urlParaPC = entidadAReproducir.url;
+            trackTitle = entidadAReproducir.title;
+            trackAuthor = entidadAReproducir.author;
         }
 
-        // 3. AUDITORÍA SANITIZADA
-        await log(interaction.guild, {
-            categoria: 'musica',
-            titulo: esPlaylist ? 'Colección Cargada' : 'Pista Cargada',
-            descripcion: `${nombreAMostrar} ha sido inyectada en los circuitos de Graf Eisen.`,
-            campos: [
-                { name: '🎤 Autor/Canal', value: autorAMostrar, inline: true },
-                { name: '🔢 Cantidad',    value: `${cantidadPistas} pista(s)`, inline: true },
-                { name: '📶 Calidad',     value: `Adaptativa (${Math.round(canalVoz.bitrate / 1000)}kbps)`, inline: true }
-            ],
-            usuario: interaction.user,
-        });
+        const nombreAMostrar = esPlaylist ? `la playlist **${trackTitle}**` : `**${trackTitle}**`;
 
-        // 4. RESPUESTA FINAL AL USUARIO
-        await interaction.editReply(`✅ ${nombreAMostrar} añadida a la cola. ¡Disfruta del audio Hi-Fi!`);
+        // 🌟 2. INTENTO PRINCIPAL: DELEGAR A LA PC LOCAL (Hi-Fi)
+        const pcOrdenUrl = `http://100.127.221.32:3000/api/play?url=${encodeURIComponent(urlParaPC)}&guildId=${interaction.guildId}&voiceId=${canalVoz.id}&bitrate=96`;
 
-    } catch (error) {
-        const errorLimpio = sanitizeErrorMessage(error.message);
+        try {
+            // Le damos 3 segundos a la PC para que reciba la orden
+            await _mandarOrdenAPC(pcOrdenUrl, 3000);
+
+            // Si llegamos aquí, la PC aceptó la orden y se está conectando a Discord
+            await interaction.editReply(`✅ ${nombreAMostrar} delegada al **Músculo Local (Hi-Fi)**. ¡Cero carga para la VM!`);
+
+            // Auditoría de éxito en PC
+            await log(interaction.guild, {
+                categoria: 'musica',
+                titulo: esPlaylist ? 'Colección Delegada a PC' : 'Pista Delegada a PC',
+                descripcion: `${nombreAMostrar} procesada por la PC Local.`,
+                campos: [
+                    { name: '🎤 Autor', value: trackAuthor, inline: true },
+                    { name: '💻 Motor', value: 'Windows (Tailscale)', inline: true }
+                ],
+                usuario: interaction.user,
+            });
+
+            return; // Termina la ejecución, la PC hará el resto
+
+        } catch (errorPing) {
+            // 🌟 3. FALLA LA PC -> MODO VM FALLBACK (Supervivencia)
+            console.warn(`[Router] ⚠️ PC no disponible. Activando Fallback. Razón: ${errorPing.message}`);
+            
+            await interaction.editReply(`⚠️ **[Fallback]** El servidor principal no responde. Reproduciendo ${nombreAMostrar} desde la VM (Modo Supervivencia a 32kbps)...`);
+
+            // Arrancamos el discord-player en la VM
+            const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
+                nodeOptions: {
+                    metadata: { canal: interaction.channel, guildId: interaction.guildId },
+                    leaveOnEmpty: true,
+                    leaveOnEmptyCooldown: 5000,
+                    leaveOnEnd: true,
+                    volume: 40,
+                    selfDeaf: true
+                }
+            });
+
+            // Auditoría de Fallback
+            await log(interaction.guild, {
+                categoria: 'sistema',
+                titulo: '⚠️ VM Fallback Activado',
+                descripcion: `Se usó la Máquina Virtual porque la PC no contestó.`,
+                campos: [
+                    { name: '🎵 Pista', value: track.title, inline: true },
+                    { name: '📶 Calidad', value: `Reducida`, inline: true }
+                ],
+                usuario: interaction.user,
+            });
+        }
+
+    } catch (errorCritico) {
+        const errorLimpio = sanitizeErrorMessage(errorCritico.message);
         console.error('[Error de Audio]:', errorLimpio);
 
-        await log(interaction.guild, {
-            categoria: 'sistema',
-            titulo: 'Fallo de Ingestión',
-            descripcion: 'Graf Eisen no pudo procesar la fuente de audio.',
-            error: errorLimpio,
-            usuario: interaction.user
-        }).catch(() => null);
-
         if (interaction.deferred || interaction.replied) {
-            await interaction.editReply('❌ ¡Graf Eisen ha tenido un fallo técnico! No pude procesar la música.');
+            await interaction.editReply('❌ ¡Fallo crítico global! Ni la PC ni la VM pudieron reproducir la canción.');
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FUNCIÓN AUXILIAR PARA HABLAR CON LA PC POR TAILSCALE
+// ─────────────────────────────────────────────────────────────────
+function _mandarOrdenAPC(url, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(url, (res) => {
+            if (res.statusCode === 200) resolve();
+            else reject(new Error(`HTTP Status ${res.statusCode}`));
+        });
+
+        req.setTimeout(timeoutMs, () => {
+            req.destroy();
+            reject(new Error('Timeout de Tailscale'));
+        });
+
+        req.on('error', (err) => reject(err));
+    });
 }

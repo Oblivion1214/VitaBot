@@ -233,14 +233,23 @@ function secondsToTime(secs) {
 function limpiarParaLyrics(texto, autor) {
     if (!texto) return '';
     let limpio = texto
-        .replace(/\(Letra Oficial\)/gi,'').replace(/\(Letra\)/gi,'')
-        .replace(/\(Letra Lyrics\)/gi,'').replace(/\(Video Oficial\)/gi,'')
-        .replace(/\(Video\)/gi,'').replace(/\(Official Video\)/gi,'')
-        .replace(/\(Lyrics\)/gi,'').replace(/\(Audio Oficial\)/gi,'')
-        .replace(/\(Lyrics Video\)/gi,'').replace(/\(Cover Audio\)/gi,'')
-        .replace(/\(Official Live Video\)/gi,'').replace(/\(Live Video\)/gi,'')
-        .replace(/\(Official Live\)/gi,'').replace(/\[.*?\]/g,'')
-        .replace(/"/g,'').replace(/\s+/g,' ').trim();
+        .replace(/\(Letra Oficial\)/gi,'')
+        .replace(/\(Letra\)/gi,'')
+        .replace(/\(Letra Lyrics\)/gi,'')
+        .replace(/\(Video Oficial\)/gi,'')
+        .replace(/\(Video\)/gi,'')
+        .replace(/\(Official Video\)/gi,'')
+        .replace(/\(Lyrics\)/gi,'')
+        .replace(/\(Audio Oficial\)/gi,'')
+        .replace(/\(Lyrics Video\)/gi,'')
+        .replace(/\(Cover Audio\)/gi,'')
+        .replace(/\(Official Live Video\)/gi,'')
+        .replace(/\(Live Video\)/gi,'')
+        .replace(/\(Official Live\)/gi,'')
+        .replace(/\[.*?\]/g,'')
+        .replace(/"/g,'')
+        .replace(/\s+/g,' ')
+        .trim();
     if (limpio.includes('-')) {
         const partes = limpio.split('-');
         if (autor && partes[0].toLowerCase().includes(autor.toLowerCase())) limpio = partes[1].trim();

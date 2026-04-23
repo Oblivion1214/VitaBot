@@ -9,12 +9,20 @@ function limpiarParaLyrics(texto, autor) {
     if (!texto) return '';
     
     let limpio = texto
-        .replace(/\(Letra Oficial\)/gi, '')
-        .replace(/\(Video Oficial\)/gi, '')
-        .replace(/\(Letra\)/gi, '')
-        .replace(/\(Official Video\)/gi, '')
-        .replace(/\(Lyrics\)/gi, '')
-        .replace(/\[.*?\]/g, '') // Elimina corchetes
+        .replace(/\(Letra Oficial\)/gi,'')
+        .replace(/\(Letra\)/gi,'')
+        .replace(/\(Letra Lyrics\)/gi,'')
+        .replace(/\(Video Oficial\)/gi,'')
+        .replace(/\(Video\)/gi,'')
+        .replace(/\(Official Video\)/gi,'')
+        .replace(/\(Lyrics\)/gi,'')
+        .replace(/\(Audio Oficial\)/gi,'')
+        .replace(/\(Lyrics Video\)/gi,'')
+        .replace(/\(Cover Audio\)/gi,'')
+        .replace(/\(Official Live Video\)/gi,'')
+        .replace(/\(Live Video\)/gi,'')
+        .replace(/\(Official Live\)/gi,'')
+        .replace(/\[.*?\]/g,'') // Elimina corchetes
         .replace(/"/g, '')
         .replace(/\s+/g, ' ')
         .trim();
