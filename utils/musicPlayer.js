@@ -12,7 +12,7 @@ const { spawn, execSync } = require('child_process');
 const youtubeExt = require('youtube-ext');
 const youtubedl  = require('youtube-dl-exec');
 const { log, sanitizeErrorMessage } = require('./logger');
-const { Transform, PassThrough } = require('stream');
+const { Transform, PassThrough, Readable } = require('stream');
 
 // ─────────────────────────────────────────────
 // CONFIGURACIÓN HÍBRIDA
@@ -472,12 +472,8 @@ class YoutubeExtExtractor extends BaseExtractor {
         const pcUrl = `${PC_STREAM_BASE}?url=${encodeURIComponent(cleanUrl)}&bitrate=${targetBitrate}`;
         console.log(`[STREAM:PC] 🏠 Conectando → ${PC_AUDIO_HOST}:${PC_AUDIO_PORT}`);
         
-        const streamId = `${Date.now()}-${Math.random().toString(36).substring(2,6)}`;
-        const filePath = path.join(os.tmpdir(), `vita-${streamId}.opus`);
-
+        const { Readable } = require('stream');
         const tSpawn = Date.now();
-        let bytesEmitidos = 0;
-        let streamStarted = false;
 
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
@@ -489,72 +485,65 @@ class YoutubeExtExtractor extends BaseExtractor {
                     return;
                 }
 
-                console.log(`[STREAM:PC] ✅ Conexión HTTP. Descargando a disco temporal...`);
+                console.log(`[STREAM:PC] ✅ Conexión HTTP. Descargando a RAM Pura (Anti-HDD)...`);
 
-                // 🌟 EL BÚFER DE DISCO (Desacopla la red y protege el CPU)
-                const fileWriter = fs.createWriteStream(filePath);
-                res.pipe(fileWriter);
+                const chunks = [];
+                let bytesEmitidos = 0;
 
-                fileWriter.on('error', (err) => {
-                    console.error(`[STREAM:PC] 🔴 Error de disco: ${err.message}`);
-                    req.destroy();
-                    if (!streamStarted) this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
-                });
-
-                const timeoutArranque = setTimeout(() => {
-                    if (!streamStarted) {
-                        console.warn(`[STREAM:PC] ⚠️ Timeout 15s esperando búfer → VM fallback`);
-                        req.destroy();
-                        pcLocalDisponible = false;
-                        this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
-                    }
-                }, 15_000);
-
-                // Escuchamos la descarga para iniciar el audio
+                // Vamos guardando la canción en pedacitos en un array en la RAM
                 res.on('data', (chunk) => {
+                    chunks.push(chunk);
                     bytesEmitidos += chunk.length;
-                    
-                    // Empezar a reproducir al llegar a 512KB (~45 segundos de colchón musical)
-                    if (!streamStarted && bytesEmitidos >= 512 * 1024) {
-                        streamStarted = true;
-                        clearTimeout(timeoutArranque);
-                        console.log(`[STREAM:PC] ⚡ Búfer seguro de 512KB alcanzado. Iniciando audio...`);
-                        
-                        const readStream = fs.createReadStream(filePath);
-                        
-                        // Si la canción termina o el usuario la salta
-                        readStream.on('close', () => {
-                            req.destroy(); // Cortamos la descarga de la PC para ahorrar internet
-                            fs.unlink(filePath, () => console.log(`[STREAM:PC] 🗑️ Archivo borrado (${streamId})`));
-                        });
-
-                        resolve({ stream: readStream, type: StreamType.OggOpus });
-                    }
                 });
 
-                // Si la descarga termina antes de llegar a los 512KB (canciones muy cortas)
+                // Le damos 45s de paciencia por si el internet varía o es una canción larga
+                const timeoutArranque = setTimeout(() => {
+                    console.warn(`[STREAM:PC] ⚠️ Timeout 45s descargando → VM fallback`);
+                    req.destroy();
+                    pcLocalDisponible = false;
+                    this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
+                }, 45_000);
+
+                // ¡La descarga terminó en unos segundos!
                 res.on('end', () => {
+                    clearTimeout(timeoutArranque);
                     const dur = ((Date.now() - tSpawn) / 1000).toFixed(1);
-                    console.log(`[STREAM:PC] ✅ Descarga a disco completada | ${(bytesEmitidos/1024/1024).toFixed(2)} MB | ${dur}s`);
+                    const mb = (bytesEmitidos / 1024 / 1024).toFixed(2);
+                    console.log(`[STREAM:PC] ✅ Descarga a RAM completada | ${mb} MB | ${dur}s`);
                     
-                    if (!streamStarted) {
-                        streamStarted = true;
-                        clearTimeout(timeoutArranque);
-                        
-                        const readStream = fs.createReadStream(filePath);
-                        readStream.on('close', () => {
-                            fs.unlink(filePath, () => console.log(`[STREAM:PC] 🗑️ Archivo borrado (${streamId})`));
-                        });
-                        
-                        resolve({ stream: readStream, type: StreamType.OggOpus });
-                    }
+                    // Fusionamos todos los pedacitos en un solo bloque sólido en RAM
+                    const fullBuffer = Buffer.concat(chunks);
+                    let offset = 0;
+
+                    // 🌟 EL TANQUE ASÍNCRONO DE RAM (Evita cortes y salva el CPU)
+                    const ramStream = new Readable({
+                        highWaterMark: 64 * 1024,
+                        read(size) {
+                            if (offset >= fullBuffer.length) {
+                                this.push(null); // Fin de la canción
+                                return;
+                            }
+                            
+                            // ¡LA MAGIA!: setImmediate rompe el procesamiento síncrono.
+                            // Le entrega un pedacito a Discord y deja respirar al CPU por 1 milisegundo.
+                            setImmediate(() => {
+                                const chunkSize = Math.min(size || 16384, fullBuffer.length - offset);
+                                const chunk = fullBuffer.slice(offset, offset + chunkSize);
+                                offset += chunkSize;
+                                this.push(chunk);
+                            });
+                        }
+                    });
+
+                    // Le entregamos este flujo mágico a Discord
+                    resolve({ stream: ramStream, type: StreamType.OggOpus });
                 });
             });
 
             req.on('error', (err) => {
                 console.error(`[STREAM:PC] 🔴 Error TCP: ${err.message} → VM fallback`);
                 pcLocalDisponible = false;
-                if (!streamStarted) this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
+                this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
             });
         });
     }
