@@ -507,8 +507,8 @@ class YoutubeExtExtractor extends BaseExtractor {
                 }, 1000);
 
                 // 🌟 EL ESPÍA ASPIRADORA: Búfer de 20MB + Métricas integradas
-                const aspiradoraEspiaVM = new Transform({
-                    highWaterMark: 1024 * 1024 * 20, // 20 MB de almacenamiento RAM
+                const espiaLigeroVM = new Transform({
+                    //highWaterMark: 1024 * 1024 * 20, // 20 MB de almacenamiento RAM
                     transform(chunk, encoding, callback) {
                         bytesEmitidos += chunk.length;
                         ultimoChunkMs  = Date.now();
@@ -564,8 +564,9 @@ class YoutubeExtExtractor extends BaseExtractor {
                 console.log(`[STREAM:PC] ✅ Pipeline configurado. Preparación: ${Date.now() - t0}ms`);
 
                 resolve({
-                    stream:        aspiradoraEspiaVM, // Se lo pasamos directamente a Discord
-                    type:          StreamType.OggOpus
+                    stream:        espiaLigeroVM, // Se lo pasamos directamente a Discord
+                    type:          StreamType.OggOpus,
+                    highWaterMark: 1 << 18 // ⬅️ DEVOLVEMOS EL BÚFER SANO (256KB) A DISCORD
                 });
             });
 
