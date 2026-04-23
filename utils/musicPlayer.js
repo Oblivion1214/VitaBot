@@ -482,7 +482,6 @@ class YoutubeExtExtractor extends BaseExtractor {
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
                 console.log(`[STREAM:PC] Respuesta HTTP: ${res.statusCode}`);
-                console.log(`[STREAM:PC]   Headers: ${JSON.stringify(res.headers).slice(0,200)}`);
 
                 if (res.statusCode !== 200) {
                     console.error(`[STREAM:PC] 🔴 HTTP ${res.statusCode} → marcando PC offline, usando VM fallback`);
@@ -507,30 +506,34 @@ class YoutubeExtExtractor extends BaseExtractor {
                     }
                 }, 1000);
 
-                // 🌟 LA ASPIRADORA DE RAM: 20 MB (Succionará toda la red al instante)
-                const aspiradoraVM = new PassThrough({ highWaterMark: 1024 * 1024 * 20 });
+                // 🌟 EL ESPÍA ASPIRADORA: Búfer de 20MB + Métricas integradas
+                const aspiradoraEspiaVM = new Transform({
+                    highWaterMark: 1024 * 1024 * 20, // 20 MB de almacenamiento RAM
+                    transform(chunk, encoding, callback) {
+                        bytesEmitidos += chunk.length;
+                        ultimoChunkMs  = Date.now();
 
-                // Conectamos la respuesta de red directamente a la aspiradora
-                res.pipe(aspiradoraVM);
+                        if (!primerDatoMs) {
+                            primerDatoMs = Date.now();
+                            console.log(`[STREAM:PC] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
+                        }
 
-                // --- TUS MÉTRICAS INTACTAS CONECTADAS A LA ASPIRADORA ---
-                aspiradoraVM.on('data', (chunk) => {
-                    bytesEmitidos += chunk.length;
-                    ultimoChunkMs  = Date.now(); // Actualizamos el watchdog
+                        if (bytesEmitidos % (1024 * 1024) < chunk.length) {
+                            const elapsedS = (Date.now() - primerDatoMs) / 1000;
+                            const tasaKbps = elapsedS > 0 ? ((bytesEmitidos*8)/elapsedS/1000).toFixed(1) : '?';
+                            console.log(`[STREAM:PC] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps`);
+                        }
 
-                    if (!primerDatoMs) {
-                        primerDatoMs = Date.now();
-                        console.log(`[STREAM:PC] ⚡ Primer chunk en ${primerDatoMs - tSpawn}ms | ${chunk.length} bytes`);
-                    }
-
-                    if (bytesEmitidos % (1024 * 1024) < chunk.length) {
-                        const elapsedS = (Date.now() - primerDatoMs) / 1000;
-                        const tasaKbps = elapsedS > 0 ? ((bytesEmitidos*8)/elapsedS/1000).toFixed(1) : '?';
-                        console.log(`[STREAM:PC] 📊 ${(bytesEmitidos/1024/1024).toFixed(1)} MB | ~${tasaKbps} kbps`);
+                        // Le entregamos el chunk INTACTO a Discord.js
+                        callback(null, chunk);
                     }
                 });
 
-                // Cuando la red termina de enviarnos la canción entera
+                // Conectamos la descarga de red al Espía-Aspiradora
+                res.pipe(aspiradoraEspiaVM);
+
+                // IMPORTANTE: ¡Desapareció el aspiradora.on('data')! Ya no hay agujero negro.
+
                 res.on('end', () => {
                     clearInterval(watchdog);
                     const dur = ((Date.now() - tSpawn) / 1000).toFixed(1);
@@ -540,48 +543,40 @@ class YoutubeExtExtractor extends BaseExtractor {
 
                 res.on('error', (err) => {
                     clearInterval(watchdog);
-                    console.error(`[STREAM:PC] 🔴 Error en stream HTTP: ${err.message}`);
-                    pcLocalDisponible    = false;
+                    console.error(`[STREAM:PC] 🔴 Error HTTP: ${err.message}`);
+                    pcLocalDisponible = false;
                     ultimaVerificacionPC = 0;
                 });
 
-                // Si no llega el primer chunk en 15s → fallback a VM
                 const primerChunkTimeout = setTimeout(() => {
                     if (!primerDatoMs) {
                         console.warn(`[STREAM:PC] ⚠️ Timeout 15s sin primer chunk → VM fallback`);
                         req.destroy();
                         clearInterval(watchdog);
-                        pcLocalDisponible    = false;
+                        pcLocalDisponible = false;
                         ultimaVerificacionPC = 0;
                         this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
                     }
                 }, 15_000);
 
-                res.once('data', () => {
-                    clearTimeout(primerChunkTimeout);
-                    console.log(`[STREAM:PC] ✅ Timeout de arranque cancelado`);
-                });
+                res.once('data', () => clearTimeout(primerChunkTimeout));
 
                 console.log(`[STREAM:PC] ✅ Pipeline configurado. Preparación: ${Date.now() - t0}ms`);
 
-                // IMPORTANTE: Pasamos la aspiradora y NO ponemos highWaterMark extra
                 resolve({
-                    stream:        aspiradoraVM, 
+                    stream:        aspiradoraEspiaVM, // Se lo pasamos directamente a Discord
                     type:          StreamType.OggOpus
                 });
             });
 
-            // ----------------------------------------------------
-            // CONFIGURACIÓN DEL SOCKET (Mantiene el túnel vivo)
-            // ----------------------------------------------------
             req.on('socket', (socket) => {
                 socket.setKeepAlive(true, 10000); 
                 socket.setTimeout(0); 
             });
 
             req.on('error', (err) => {
-                console.error(`[STREAM:PC] 🔴 Error de conexión TCP: ${err.code} — ${err.message} → VM fallback`);
-                pcLocalDisponible    = false;
+                console.error(`[STREAM:PC] 🔴 Error TCP: ${err.code} — ${err.message} → VM fallback`);
+                pcLocalDisponible = false;
                 ultimaVerificacionPC = 0;
                 this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
             });
@@ -589,7 +584,7 @@ class YoutubeExtExtractor extends BaseExtractor {
             req.on('timeout', () => {
                 req.destroy();
                 console.warn(`[STREAM:PC] ⚠️ Timeout TCP → VM fallback`);
-                pcLocalDisponible    = false;
+                pcLocalDisponible = false;
                 ultimaVerificacionPC = 0;
                 this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
             });
