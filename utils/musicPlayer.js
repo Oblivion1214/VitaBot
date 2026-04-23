@@ -3,6 +3,7 @@
 const path = require('path');
 const os   = require('os');
 const http = require('http');
+const fs = require('fs');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { Player, BaseExtractor, Track, Playlist } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
@@ -472,9 +473,6 @@ class YoutubeExtExtractor extends BaseExtractor {
         const pcUrl = `${PC_STREAM_BASE}?url=${encodeURIComponent(cleanUrl)}&bitrate=${targetBitrate}`;
         console.log(`[STREAM:PC] 🏠 Conectando → ${PC_AUDIO_HOST}:${PC_AUDIO_PORT}`);
         
-        const fs = require('fs');
-        const path = require('path');
-        const os = require('os');
         const streamId = `${Date.now()}-${Math.random().toString(36).substring(2,6)}`;
         const filePath = path.join(os.tmpdir(), `vita-${streamId}.opus`);
 
