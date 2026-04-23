@@ -472,7 +472,9 @@ class YoutubeExtExtractor extends BaseExtractor {
         const pcUrl = `${PC_STREAM_BASE}?url=${encodeURIComponent(cleanUrl)}&bitrate=${targetBitrate}`;
         console.log(`[STREAM:PC] 🏠 Conectando → ${PC_AUDIO_HOST}:${PC_AUDIO_PORT}`);
 
-        const { Readable } = require('stream');
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
 
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
@@ -484,48 +486,42 @@ class YoutubeExtExtractor extends BaseExtractor {
                     return;
                 }
 
-                console.log(`[STREAM:PC] ✅ Conexión HTTP. Recibiendo a máxima velocidad...`);
+                // 🌟 EL TRUCO DEL RAM-DISK (tmpfs)
+                // Usamos la memoria RAM de Linux como si fuera un disco duro.
+                // Esto nos da los streams nativos perfectos de C++ sin I/O Wait.
+                const isLinux = os.platform() === 'linux';
+                const baseDir = isLinux && fs.existsSync('/dev/shm') ? '/dev/shm' : os.tmpdir();
+                const tempFile = path.join(baseDir, `vita-${Date.now()}-${Math.random().toString(36).slice(2,6)}.opus`);
 
-                const chunks = [];
-                res.on('data', c => chunks.push(c));
+                console.log(`[STREAM:PC] ✅ Conexión HTTP. Guardando en RAM-Disk (${baseDir})...`);
 
-                res.on('end', () => {
-                    const buffer = Buffer.concat(chunks);
-                    console.log(`[STREAM:PC] ✅ Archivo en RAM | ${(buffer.length/1024/1024).toFixed(2)} MB`);
+                const fileWriter = fs.createWriteStream(tempFile);
+                res.pipe(fileWriter);
 
-                    // 🌟 EL ESTRANGULADOR (Leaky Bucket)
-                    let offset = 0;
-                    const startTime = Date.now();
-                    // Límite de 32 KB/s (~250 kbps). Ni muy rápido, ni muy lento.
-                    const bytesPerSecond = 32768; 
+                let bytes = 0;
+                res.on('data', c => bytes += c.length);
 
-                    const throttledStream = new Readable({
-                        read(size) {
-                            if (offset >= buffer.length) {
-                                this.push(null); // Fin de la canción
-                                return;
-                            }
+                // Esperamos 1.7 segundos a que se descargue por completo para no crear colisiones
+                fileWriter.on('finish', () => {
+                    const mb = (bytes / 1024 / 1024).toFixed(2);
+                    console.log(`[STREAM:PC] ✅ Archivo en RAM-Disk completado | ${mb} MB`);
 
-                            const chunk = buffer.slice(offset, offset + (size || 16384));
-                            
-                            // Matemáticas de flujo: calculamos si vamos muy rápido
-                            const expectedTime = (offset / bytesPerSecond) * 1000;
-                            const elapsedTime = Date.now() - startTime;
-                            const delay = expectedTime - elapsedTime;
+                    // 🌟 LA MAGIA NATIVA
+                    // Leemos el archivo usando el stream de C++ del sistema operativo.
+                    // Discord.js consumirá esto a la velocidad perfecta, sin retrasos de JS.
+                    const readStream = fs.createReadStream(tempFile);
 
-                            offset += chunk.length;
-
-                            if (delay > 0) {
-                                // Si vamos rápido, pausamos un milisegundo para relajar la CPU
-                                setTimeout(() => this.push(chunk), delay);
-                            } else {
-                                // Si vamos a buen ritmo, entregamos inmediato
-                                this.push(chunk);
-                            }
-                        }
+                    readStream.on('close', () => {
+                        fs.unlink(tempFile, () => console.log(`[STREAM:PC] 🗑️ Archivo RAM-Disk borrado`));
                     });
 
-                    resolve({ stream: throttledStream, type: StreamType.OggOpus });
+                    resolve({ stream: readStream, type: StreamType.OggOpus });
+                });
+
+                fileWriter.on('error', (err) => {
+                    console.error(`[STREAM:PC] 🔴 Error en RAM-Disk: ${err.message}`);
+                    req.destroy();
+                    this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
                 });
             });
 
