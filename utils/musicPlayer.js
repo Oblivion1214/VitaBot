@@ -530,7 +530,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 });
 
                 // Conectamos la descarga de red al Espía-Aspiradora
-                res.pipe(aspiradoraEspiaVM);
+                res.pipe(espiaLigeroVM);
 
                 // IMPORTANTE: ¡Desapareció el aspiradora.on('data')! Ya no hay agujero negro.
 
