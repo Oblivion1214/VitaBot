@@ -480,7 +480,7 @@ class YoutubeExtExtractor extends BaseExtractor {
         let silencioAlert = false;
 
         return new Promise((resolve, reject) => {
-            const req = http.get(pcUrl, { timeout: 12_000 }, (res) => {
+            const req = http.get(pcUrl, (res) => {
                 console.log(`[STREAM:PC] Respuesta HTTP: ${res.statusCode}`);
                 console.log(`[STREAM:PC]   Headers: ${JSON.stringify(res.headers).slice(0,200)}`);
 
@@ -494,6 +494,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 }
 
                 console.log(`[STREAM:PC] ✅ Conexión HTTP establecida con PC Local`);
+                req.setTimeout(0); // Le dice a Node: "Nunca mates esta conexión por inactividad"
 
                 const watchdog = setInterval(() => {
                     const silencio = Date.now() - ultimoChunkMs;
