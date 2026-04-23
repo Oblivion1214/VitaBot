@@ -472,25 +472,61 @@ class YoutubeExtExtractor extends BaseExtractor {
         const pcUrl = `${PC_STREAM_BASE}?url=${encodeURIComponent(cleanUrl)}&bitrate=${targetBitrate}`;
         console.log(`[STREAM:PC] 🏠 Conectando → ${PC_AUDIO_HOST}:${PC_AUDIO_PORT}`);
 
+        const { Readable } = require('stream');
+
         return new Promise((resolve, reject) => {
             const req = http.get(pcUrl, (res) => {
                 if (res.statusCode !== 200) {
                     console.error(`[STREAM:PC] 🔴 HTTP ${res.statusCode} → fallback a VM`);
                     pcLocalDisponible = false;
                     req.destroy();
-                    return this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
+                    this._streamDesdeVM(cleanUrl, null, Math.min(64, targetBitrate), t0).then(resolve).catch(reject);
+                    return;
                 }
 
-                console.log(`[STREAM:PC] ✅ Conexión HTTP. Entregando stream pacífico a Discord...`);
-                
-                // Le pasamos la respuesta de red directamente a Discord, sin intermediarios.
-                resolve({ stream: res, type: StreamType.OggOpus });
-            });
+                console.log(`[STREAM:PC] ✅ Conexión HTTP. Recibiendo a máxima velocidad...`);
 
-            // Mantiene viva la conexión de Tailscale
-            req.on('socket', (socket) => {
-                socket.setKeepAlive(true, 10000);
-                socket.setTimeout(0);
+                const chunks = [];
+                res.on('data', c => chunks.push(c));
+
+                res.on('end', () => {
+                    const buffer = Buffer.concat(chunks);
+                    console.log(`[STREAM:PC] ✅ Archivo en RAM | ${(buffer.length/1024/1024).toFixed(2)} MB`);
+
+                    // 🌟 EL ESTRANGULADOR (Leaky Bucket)
+                    let offset = 0;
+                    const startTime = Date.now();
+                    // Límite de 32 KB/s (~250 kbps). Ni muy rápido, ni muy lento.
+                    const bytesPerSecond = 32768; 
+
+                    const throttledStream = new Readable({
+                        read(size) {
+                            if (offset >= buffer.length) {
+                                this.push(null); // Fin de la canción
+                                return;
+                            }
+
+                            const chunk = buffer.slice(offset, offset + (size || 16384));
+                            
+                            // Matemáticas de flujo: calculamos si vamos muy rápido
+                            const expectedTime = (offset / bytesPerSecond) * 1000;
+                            const elapsedTime = Date.now() - startTime;
+                            const delay = expectedTime - elapsedTime;
+
+                            offset += chunk.length;
+
+                            if (delay > 0) {
+                                // Si vamos rápido, pausamos un milisegundo para relajar la CPU
+                                setTimeout(() => this.push(chunk), delay);
+                            } else {
+                                // Si vamos a buen ritmo, entregamos inmediato
+                                this.push(chunk);
+                            }
+                        }
+                    });
+
+                    resolve({ stream: throttledStream, type: StreamType.OggOpus });
+                });
             });
 
             req.on('error', (err) => {
