@@ -274,22 +274,27 @@ const mensajesActivos = new Map();
 
 app.post('/webhook/track-change', async (req, res) => {
     const { guildId, channelId, track } = req.body;
+    
+    // 🌟 LOG DE RECEPCIÓN
+    console.log(`[Webhook] 📥 Recibido cambio de pista: ${track?.title}`);
+    
     if (!guildId || !channelId || !track) return res.status(400).send('Faltan datos');
 
     try {
         const guild = client.guilds.cache.get(guildId);
         const canal = guild?.channels.cache.get(channelId);
         
-        if (!canal) return res.status(404).send('Canal no encontrado');
+        if (!canal) {
+            console.warn(`[Webhook] ⚠️ No pude encontrar el canal de texto ${channelId}`);
+            return res.status(404).send('Canal no encontrado');
+        }
 
-        // Borrar los botones del mensaje viejo para que no queden zombis
         const msgViejoId = mensajesActivos.get(guildId);
         if (msgViejoId) {
             const msgViejo = await canal.messages.fetch(msgViejoId).catch(() => null);
             if (msgViejo) await msgViejo.edit({ components: [] }).catch(() => null);
         }
 
-        // Construimos el nuevo panel para la canción que la PC acaba de poner
         const embed = new EmbedBuilder()
             .setTitle('🎵 Reproduciendo Ahora')
             .setDescription(`**[${track.title}](${track.url})**\nAutor: ${track.author}`)
@@ -311,14 +316,15 @@ app.post('/webhook/track-change', async (req, res) => {
 
         const nuevoMsg = await canal.send({ embeds: [embed], components: [fila1, fila2] });
         mensajesActivos.set(guildId, nuevoMsg.id);
-
+        
+        console.log(`[Webhook] ✅ Panel con botones dibujado en Discord.`);
         res.status(200).send('Panel actualizado');
     } catch (error) {
-        console.error('[Webhook] Error al actualizar panel:', error.message);
+        console.error('[Webhook] 🔴 Error al actualizar panel:', error.message);
         res.status(500).send('Error interno');
     }
 });
 
-app.listen(8080, () => {
+app.listen(8080, '0.0.0.0', () => {
     console.log('📡 | Receptor de Telemetría (Webhook) escuchando en puerto 8080');
 });
