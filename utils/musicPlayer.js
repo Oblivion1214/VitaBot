@@ -294,41 +294,57 @@ class YoutubeExtExtractor extends BaseExtractor {
         logSistema('HANDLE_START');
 
         try {
-            // ── 1. FIX: SPOTIFY CON API OFICIAL ───────────────────────────────────
+            // ── 1. FIX DEFINITIVO: SPOTIFY METADATA SCRAPER ───────────────────────
             if (query.includes('spotify.com')) {
                 console.log(`[Handle] 🟢 Link de Spotify detectado...`);
                 const t1 = Date.now();
                 try {
-                    // API Oficial de Spotify oEmbed (Extrae Título y Artista exactos)
-                    const oembedRes = await fetch(`https://embed.spotify.com/oembed?url=${query}`);
-                    if (!oembedRes.ok) throw new Error('API oEmbed de Spotify falló');
+                    // 1. Visitamos la página web de Spotify simulando ser un navegador
+                    const spotRes = await fetch(query, {
+                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+                    });
+                    if (!spotRes.ok) throw new Error('No se pudo acceder a la página de Spotify');
                     
-                    const oembed = await oembedRes.json();
-                    const title = oembed.title || 'Canción Desconocida';
-                    const author = oembed.author_name || ''; 
+                    const html = await spotRes.text();
                     
-                    console.log(`[Spotify] Datos oficiales en ${Date.now()-t1}ms → "${title}" por "${author}"`);
+                    // 2. Extraemos las etiquetas ocultas usando Expresiones Regulares
+                    const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
+                    const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/);
+                    const thumbMatch = html.match(/<meta property="og:image" content="([^"]+)"/);
+
+                    const title = titleMatch ? titleMatch[1] : 'Canción Desconocida';
+                    let author = '';
                     
-                    // Buscamos en YouTube usando Nombre + Artista para ser exactos
+                    // Spotify guarda el artista en la descripción así: "Song · Ado · 2023"
+                    if (descMatch) {
+                        const partes = descMatch[1].split('·');
+                        if (partes.length >= 2) author = partes[1].trim(); 
+                    }
+                    
+                    console.log(`[Spotify] Metadatos extraídos en ${Date.now()-t1}ms → "${title}" por "${author}"`);
+                    
+                    // 3. Buscamos en YouTube usando Nombre + Artista para precisión militar
                     const searchQuery = `${title} ${author} audio`;
                     const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 1 });
                     
                     if (!results?.videos?.length) throw new Error('No se encontró equivalencia en YouTube');
                     
                     const video = results.videos[0];
-                    const videoUrl = cleanYoutubeUrl(video.url);
-                    if (!videoUrl) throw new Error('URL equivalente inválida');
+                    // Sanitizamos la URL para que sea perfecta
+                    const videoId = video.url.includes('v=') ? new URL(video.url).searchParams.get('v') : video.url.split('/').pop();
+                    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
                     
+                    // 4. Construimos la canción con los datos originales de Spotify
                     const track = buildTrack(this.context.player, {
-                        title: `${title}`, // Mostramos el título original de Spotify
+                        title: title, 
                         url: videoUrl,
                         duration: video.duration?.text || '0:00',
-                        thumbnail: oembed.thumbnail_url || video.thumbnails?.[0]?.url || '',
-                        author: author, 
+                        thumbnail: (thumbMatch ? thumbMatch[1] : '') || video.thumbnails?.[0]?.url || '',
+                        author: author || video.channel?.name || 'Spotify', 
                         source: 'spotify',
                     }, context, this);
                     
-                    console.log(`[Spotify] ✅ Resuelto correctamente: "${track.title}" en ${Date.now()-t0}ms`);
+                    console.log(`[Spotify] ✅ Equivalencia en YouTube encontrada: "${video.title}" en ${Date.now()-t0}ms`);
                     return { playlist: null, tracks: [track] };
 
                 } catch (e) {
@@ -514,7 +530,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 console.log(`[STREAM] 🏠 → PC Local seleccionado | bitrate: ${targetBitrate}kbps`);
                 return await this._streamDesdePC(cleanUrl, targetBitrate, t0);
             } else {
-                const bitrateReducido = Math.min(targetBitrate, 64);
+                const bitrateReducido = Math.min(targetBitrate, 32);
                 console.log(`[STREAM] 🖥  → VM Fallback seleccionado | bitrate reducido: ${bitrateReducido}kbps (original: ${targetBitrate}kbps)`);
                 return await this._streamDesdeVM(cleanUrl, track, bitrateReducido, t0);
             }
@@ -678,26 +694,24 @@ class YoutubeExtExtractor extends BaseExtractor {
             const bufsize  = maxrate * 2;
 
             const ffmpegArgs = [
-                //'-re',                        // <--- AÑADIR ESTA LÍNEA en ambos modos (PC y VM) para simular velocidad de reproducción real y evitar bursts
                 '-reconnect',             '1',
                 '-reconnect_streamed',    '1',
                 '-reconnect_delay_max',   '10',
                 ...(esLive ? ['-reconnect_at_eof', '1'] : []),
-                '-probesize',             '512K',
-                '-analyzeduration',       '512K',
+                '-probesize',             '256K', // Reducido para arrancar más rápido
+                '-analyzeduration',       '256K',
                 '-loglevel',              'warning',
                 '-i',                     audioUrl,
                 '-vn',
                 '-fflags',                '+discardcorrupt',
-                '-max_muxing_queue_size', '512',
-                '-af',                    'dynaudnorm=f=150:g=15:p=0.95',
+                '-max_muxing_queue_size', '256',
+                // ⚠️ SE ELIMINÓ EL FILTRO '-af dynaudnorm...' PORQUE CONSUME MUCHA CPU
                 '-c:a',                   'libopus',
                 '-ar',                    '48000',
                 '-ac',                    '2',
-                '-b:a',                   `${targetBitrate}k`,
-                // CONTROL DE VELOCIDAD — igual que en audioServer
-                //'-maxrate',               `${maxrate}k`,
-                //'-bufsize',               `${bufsize}k`,
+                '-b:a',                   `${targetBitrate}k`, // Aquí inyecta los 32kbps
+                '-vbr',                   'on',
+                '-compression_level',     '5', // 5 es el balance perfecto. 10 consume más CPU.
                 '-f',                     'opus',
                 'pipe:1',
             ];

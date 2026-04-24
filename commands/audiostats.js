@@ -58,6 +58,7 @@ module.exports = {
                 const mins = Math.floor(status.uptimeMs / 60000);
                 const secs = Math.floor((status.uptimeMs % 60000) / 1000).toString().padStart(2, '0');
                 const channelBitrate = canalVoz ? canalVoz.bitrate / 1000 : 96;
+                const outputBitrate = Math.min(channelBitrate, 256);
                 
                 const statsEmbed = new EmbedBuilder()
                     .setTitle('📊 Monitor de Audio - Graf Eisen (Hi-Fi)')
@@ -65,7 +66,7 @@ module.exports = {
                     .addFields(
                         { name: '🎵 Pista Actual', value: `**[${status.title}](${status.url})**\nTiempo activo: \`${mins}:${secs}\``, inline: false },
                         { name: '📥 Fuente', value: '`Opus (Windows local)`', inline: true },
-                        { name: '📤 Salida', value: `\`128 kbps (Max/Fijo)\``, inline: true },
+                        { name: '📤 Salida', value: `\`${outputBitrate} kbps (Adaptativo)\``, inline: true },
                         { name: '🎧 Canal', value: `\`${channelBitrate} kbps\``, inline: true },
                         { name: '⚙️ Motor de Audio', value: '`Tailscale Directo (PC)`', inline: true }
                     )
