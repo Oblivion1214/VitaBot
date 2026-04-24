@@ -353,7 +353,7 @@ async function ejecutarCuarentena(message, reporte) {
 
     await message.channel.send(
         `🛡️ **Cuarentena:** Enlace de ${message.author} bloqueado.\n` +
-        `Motivo: \`${reporte.motivo}\` | Score: **${scoreCompuesto?.score ?? '?'}/100**`
+        `Motivo: \`${reporte.motivo}\` | Score de Riesgo: **${scoreCompuesto?.score ?? '?'}/100**`
     ).catch(() => null);
 
     const row = new ActionRowBuilder().addComponents(
