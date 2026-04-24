@@ -294,31 +294,50 @@ class YoutubeExtExtractor extends BaseExtractor {
         logSistema('HANDLE_START');
 
         try {
-            // ── 1. SPOTIFY ────────────────────────────────────────────────
-            if (query.includes('spotify.com/track/')) {
-                const trackId = query.match(/track\/([a-zA-Z0-9]+)/)?.[1];
-                if (!trackId) return { playlist: null, tracks: [] };
+            // ── 1. FIX: SPOTIFY CON API OFICIAL ───────────────────────────────────
+            if (query.includes('spotify.com')) {
+                console.log(`[Handle] 🟢 Link de Spotify detectado...`);
                 const t1 = Date.now();
-                const oembedRes = await fetch(`https://open.spotify.com/oembed?url=spotify:track:${trackId}`);
-                if (!oembedRes.ok) throw new Error('Spotify oEmbed falló');
-                const oembed = await oembedRes.json();
-                console.log(`[Spotify] oEmbed en ${Date.now()-t1}ms → "${oembed.title}"`);
-                const results = await youtubeExt.search(oembed.title, { type: 'video', limit: 1 });
-                if (!results?.videos?.length) return { playlist: null, tracks: [] };
-                const video = results.videos[0];
-                const videoUrl = cleanYoutubeUrl(video.url);
-                if (!videoUrl) return { playlist: null, tracks: [] };
-                const track = buildTrack(this.context.player, {
-                    title: oembed.title || video.title, url: videoUrl,
-                    duration: video.duration?.text || '0:00',
-                    thumbnail: oembed.thumbnail_url || video.thumbnails?.[0]?.url || '',
-                    author: video.channel?.name || 'Desconocido', source: 'spotify',
-                }, context, this);
-                console.log(`[Spotify] ✅ "${track.title}" en ${Date.now()-t0}ms`);
-                return { playlist: null, tracks: [track] };
+                try {
+                    // API Oficial de Spotify oEmbed (Extrae Título y Artista exactos)
+                    const oembedRes = await fetch(`https://embed.spotify.com/oembed?url=${query}`);
+                    if (!oembedRes.ok) throw new Error('API oEmbed de Spotify falló');
+                    
+                    const oembed = await oembedRes.json();
+                    const title = oembed.title || 'Canción Desconocida';
+                    const author = oembed.author_name || ''; 
+                    
+                    console.log(`[Spotify] Datos oficiales en ${Date.now()-t1}ms → "${title}" por "${author}"`);
+                    
+                    // Buscamos en YouTube usando Nombre + Artista para ser exactos
+                    const searchQuery = `${title} ${author} audio`;
+                    const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 1 });
+                    
+                    if (!results?.videos?.length) throw new Error('No se encontró equivalencia en YouTube');
+                    
+                    const video = results.videos[0];
+                    const videoUrl = cleanYoutubeUrl(video.url);
+                    if (!videoUrl) throw new Error('URL equivalente inválida');
+                    
+                    const track = buildTrack(this.context.player, {
+                        title: `${title}`, // Mostramos el título original de Spotify
+                        url: videoUrl,
+                        duration: video.duration?.text || '0:00',
+                        thumbnail: oembed.thumbnail_url || video.thumbnails?.[0]?.url || '',
+                        author: author, 
+                        source: 'spotify',
+                    }, context, this);
+                    
+                    console.log(`[Spotify] ✅ Resuelto correctamente: "${track.title}" en ${Date.now()-t0}ms`);
+                    return { playlist: null, tracks: [track] };
+
+                } catch (e) {
+                    console.error(`[Spotify] 🔴 Error: ${e.message}`);
+                    return { playlist: null, tracks: [] };
+                }
             }
 
-            // ── 2. PLAYLIST ───────────────────────────────────────────────
+            // ── 2. PLAYLIST DE YOUTUBE ───────────────────────────────────────────────
             if (query.includes('list=')) {
                 console.log('[Handle] 🔍 Playlist detectada...');
                 let playlistData = null;
@@ -374,15 +393,48 @@ class YoutubeExtExtractor extends BaseExtractor {
                 return { playlist: null, tracks: [] };
             }
 
-            // ── 3. LINK DIRECTO ───────────────────────────────────────────
+            // ── 3. FIX: LINK DIRECTO (DOBLE EXTRACCIÓN) ───────────────────────────
             if (query.includes('youtube.com') || query.includes('youtu.be')) {
                 const videoUrl = cleanYoutubeUrl(query);
                 if (!videoUrl) return { playlist: null, tracks: [] };
                 console.log(`[Handle] 🔗 Link directo: ${videoUrl}`);
                 const t1 = Date.now();
-                const info = await youtubeExt.videoInfo(videoUrl, { requestOptions: { headers: { cookie: youtubeCookie } } });
-                console.log(`[Handle] videoInfo en ${Date.now()-t1}ms → "${info?.title || 'N/A'}"`);
-                if (!info?.title) return { playlist: null, tracks: [] };
+                
+                let info = null;
+                
+                // Intento 1: Extractor rápido (youtube-ext)
+                try {
+                    info = await youtubeExt.videoInfo(videoUrl, { requestOptions: { headers: { cookie: youtubeCookie } } });
+                } catch (e) {
+                    console.warn(`[Handle] ⚠️ youtube-ext falló (${e.message}). Activando yt-dlp de rescate...`);
+                }
+
+                // Intento 2: Si el de arriba falló por cambios en YouTube, usamos yt-dlp
+                if (!info || !info.title) {
+                    try {
+                        const output = await youtubedl(videoUrl, { dumpSingleJson: true, noCheckCertificates: true, quiet: true, noWarnings: true });
+                        const json = (typeof output === 'string') ? JSON.parse(output) : output;
+                        
+                        if (!json || !json.title) throw new Error("JSON vacío o sin título");
+
+                        info = {
+                            title: json.title,
+                            duration: { lengthSec: json.duration },
+                            thumbnails: [{ url: json.thumbnail }],
+                            channel: { name: json.uploader },
+                            shortDescription: json.description,
+                            views: { pretty: json.view_count },
+                            isLive: json.is_live
+                        };
+                        console.log(`[Handle] 🛠️ yt-dlp salvó la extracción.`);
+                    } catch (err) {
+                        console.error(`[Handle] 🔴 Fallo total de extracción en ambos motores: ${err.message}`);
+                        return { playlist: null, tracks: [] };
+                    }
+                }
+
+                console.log(`[Handle] videoInfo extraído en ${Date.now()-t1}ms → "${info?.title || 'N/A'}"`);
+                
                 const track = buildTrack(this.context.player, {
                     title: info.title, url: videoUrl,
                     duration: secondsToTime(info.duration?.lengthSec),
@@ -390,11 +442,12 @@ class YoutubeExtExtractor extends BaseExtractor {
                     author: info.channel?.name || 'Desconocido', source: 'youtube',
                     description: info.shortDescription || '', views: info.views?.pretty || 0, live: info.isLive || false,
                 }, context, this);
+                
                 console.log(`[Handle] ✅ "${track.title}" en ${Date.now()-t0}ms | Live: ${track.live}`);
                 return { playlist: null, tracks: [track] };
             }
 
-            // ── 4. BÚSQUEDA ───────────────────────────────────────────────
+            // ── 4. BÚSQUEDA POR TEXTO ───────────────────────────────────────────────
             const searchQuery = query.includes('music') ? query : `${query} music topic`;
             const t1 = Date.now();
             const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 10 });
