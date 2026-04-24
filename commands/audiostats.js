@@ -55,8 +55,6 @@ module.exports = {
                 if (status.error) throw new Error(status.error);
 
                 // Calcular el tiempo activo a partir de los milisegundos
-                const mins = Math.floor(status.uptimeMs / 60000);
-                const secs = Math.floor((status.uptimeMs % 60000) / 1000).toString().padStart(2, '0');
                 const channelBitrate = canalVoz ? canalVoz.bitrate / 1000 : 96;
                 const progress = queue.node.createProgressBar();
                 const outputBitrate = Math.min(channelBitrate, 256);
