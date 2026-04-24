@@ -156,7 +156,9 @@ module.exports = {
                     ...(alertasExtra.length > 0 ? [{ name: '⚠️ Notas Adicionales', value: alertasExtra.join('\n'), inline: false }] : []),
                     { name: '🛤️ Redirecciones', value: textoRuta, inline: false }
                 )
-                .setFooter({ text: `Graf Eisen Shield v8.0 + Cerebro IA` })
+                .setFooter({ text: `Graf Eisen Shield v8.0 + RED IA.` 
+                + 'EL SISTEMA NO ES PERFECTO: Siempre revisa los enlaces con tu propio juicio, especialmente si el veredicto de Vita es ambiguo o si el enlace tiene un score de riesgo moderado.'
+                })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
