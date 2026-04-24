@@ -158,6 +158,7 @@ async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, pl
         const payload = {
             guildId: interaction.guildId,
             voiceId: canalVoz.id,
+            textChannelId: interaction.channel.id,
             tracks: tracksParaEnviar
         };
 
