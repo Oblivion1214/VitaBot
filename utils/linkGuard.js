@@ -12,7 +12,7 @@ const dominiosSeguros = [
     'soundcloud.com', 'apple.com', 'music.apple.com', 'netflix.com', 'vimeo.com',
     'github.com', 'githubusercontent.com', 'gitlab.com', 'bitbucket.org',
     'google.com', 'accounts.google.com', 'googleusercontent.com', 'gstatic.com', 'bing.com',
-    'cloudflare.com', 'steamcommunity.com', 'steampowered.com', 'tenor.com', 'giphy.com',
+    'cloudflare.com', 'tenor.com', 'giphy.com',
     'wikipedia.org', 'wikimedia.org', 'twitch.tv', 'reddit.com', 'redd.it',
     'spotify.com', 'open.spotify.com', 'twitter.com', 'x.com', 'instagram.com',
     'tiktok.com', 'linkedin.com', 'amazon.com', 'microsoft.com', 'office.com'
@@ -214,7 +214,12 @@ async function escanearEnlace(link) {
 
     // ── 1. Heurística rápida (señal de alerta, NO detección) ─────────────
     const esServicioNube = serviciosNube.some(s => hostname.includes(s));
-    const tieneExtension = extensionesRiesgo.some(ext => urlObj.pathname.toLowerCase().endsWith(ext));
+    // 🌟 FIX: Revisar extensión tanto en la URL original como en la final
+    const originalUrlObj = new URL(link);
+    const tieneExtension = extensionesRiesgo.some(ext => 
+        urlObj.pathname.toLowerCase().endsWith(ext) || 
+        originalUrlObj.pathname.toLowerCase().endsWith(ext)
+    );
     // ⚠️ Ya NO marcamos reporte.detectado = true aquí.
     //    La cuarentena solo se activa si alguna API confirma la amenaza.
 
@@ -301,10 +306,10 @@ async function escanearEnlace(link) {
             reporte.motivo    = `IPQualityScore: Score de riesgo ${resIPQSData.risk_score}/100${resIPQSData.phishing ? ' · Phishing confirmado' : ''}${resIPQSData.malware ? ' · Malware confirmado' : ''}`;
             reporte.nivel     = 'ALTO';
         } else if (tieneExtension) {
-            // 🌟 FIX: Ahora los ejecutables crudos SÍ activan la cuarentena inmediata (Zero-Day Protection)
-            reporte.detectado = true; 
-            reporte.motivo    = `Archivo posiblemente peligroso, verificación humana necesaria: Extensión ejecutable \`${urlObj.pathname.split('/').pop()}\` bloqueada por seguridad preventiva.`;
-            reporte.nivel     = '???'; // El nivel real se determinará en la revisión humana, ya que podría ser un falso positivo legítimo.
+            // 🌟 FIX: Ejecutables crudos activan cuarentena inmediata
+            reporte.detectado = true;
+            reporte.motivo    = `Archivo Posiblemente Peligroso: Extensión ejecutable \`${originalUrlObj.pathname.split('/').pop()}\` bloqueada preventivamente. Requiere revisión humana.`;
+            reporte.nivel     = 'ALTO'; 
         } else if (esServicioNube) {
             reporte.motivo = 'Servicio de almacenamiento externo (sin confirmación de APIs)';
         }
