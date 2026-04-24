@@ -4,6 +4,7 @@ require('dotenv').config();
 
 // 2. IMPORTACIONES
 const { Client, Collection, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const express = require('express'); // <-- AÑADIMOS EXPRESS AQUÍ
 const fs = require('fs');
 const Genius = require('genius-lyrics');
 const { log, sanitizeErrorMessage, obtenerConfigServidor } = require('./utils/logger');
@@ -262,3 +263,62 @@ process.on('uncaughtException', (err) => {
 
 // 12. LOGIN
 client.login(process.env.TOKEN);
+
+// ─────────────────────────────────────────────────────────────────
+// 13. SERVIDOR DE WEBHOOKS (Escucha a la PC Local para actualizar Paneles)
+// ─────────────────────────────────────────────────────────────────
+const app = express();
+app.use(express.json());
+
+const mensajesActivos = new Map();
+
+app.post('/webhook/track-change', async (req, res) => {
+    const { guildId, channelId, track } = req.body;
+    if (!guildId || !channelId || !track) return res.status(400).send('Faltan datos');
+
+    try {
+        const guild = client.guilds.cache.get(guildId);
+        const canal = guild?.channels.cache.get(channelId);
+        
+        if (!canal) return res.status(404).send('Canal no encontrado');
+
+        // Borrar los botones del mensaje viejo para que no queden zombis
+        const msgViejoId = mensajesActivos.get(guildId);
+        if (msgViejoId) {
+            const msgViejo = await canal.messages.fetch(msgViejoId).catch(() => null);
+            if (msgViejo) await msgViejo.edit({ components: [] }).catch(() => null);
+        }
+
+        // Construimos el nuevo panel para la canción que la PC acaba de poner
+        const embed = new EmbedBuilder()
+            .setTitle('🎵 Reproduciendo Ahora')
+            .setDescription(`**[${track.title}](${track.url})**\nAutor: ${track.author}`)
+            .setFooter({ text: 'Motor: 🏠 PC Local (Hi-Fi)' })
+            .setColor('#00C853');
+
+        if (track.thumbnail) embed.setThumbnail(track.thumbnail);
+
+        const fila1 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('musica_pausa').setEmoji('⏯️').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('musica_salto').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('musica_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('musica_shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('musica_queue').setEmoji('📜').setStyle(ButtonStyle.Secondary)
+        );
+        const fila2 = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('musica_lyrics').setLabel('Ver Letras').setEmoji('🎤').setStyle(ButtonStyle.Secondary)
+        );
+
+        const nuevoMsg = await canal.send({ embeds: [embed], components: [fila1, fila2] });
+        mensajesActivos.set(guildId, nuevoMsg.id);
+
+        res.status(200).send('Panel actualizado');
+    } catch (error) {
+        console.error('[Webhook] Error al actualizar panel:', error.message);
+        res.status(500).send('Error interno');
+    }
+});
+
+app.listen(8080, () => {
+    console.log('📡 | Receptor de Telemetría (Webhook) escuchando en puerto 8080');
+});
