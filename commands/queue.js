@@ -1,5 +1,5 @@
 // commands/queue.js — VitaBot
-// Comando /queue con paginación por botones (◀️ / ▶️)
+// Comando /queue con paginación inteligente (Soporta VM y PC)
 const {
     SlashCommandBuilder,
     EmbedBuilder,
@@ -11,8 +11,7 @@ const {
 const { useQueue } = require('discord-player');
 
 // ─────────────────────────────────────────────
-// HELPER: construye el embed y los botones de una página.
-// Reutilizado en la respuesta inicial y en cada clic de paginación.
+// HELPER: construye el embed y los botones de una página (Para la VM)
 // ─────────────────────────────────────────────
 const TRACKS_POR_PAGINA = 10;
 
@@ -88,63 +87,89 @@ module.exports = {
 
     async execute(interaction) {
         const queue = useQueue(interaction.guildId);
+        const botChannel = interaction.guild.members.me?.voice?.channelId;
 
-        if (!queue || !queue.isPlaying()) {
+        // 1. Verificación global
+        if (!queue && !botChannel) {
             return interaction.reply({
                 content: '❌ No hay música reproduciéndose actualmente.',
                 flags: MessageFlags.Ephemeral
             });
         }
 
-        const { embed, componentes } = construirPaginaCola(queue, interaction, 0);
+        // 2. MODO MÁQUINA VIRTUAL (Usa tu código original de paginación)
+        if (queue && queue.isPlaying()) {
+            const { embed, componentes } = construirPaginaCola(queue, interaction, 0);
 
-        // Respuesta pública con fetchReply para poder crear el collector
-        const msg = await interaction.reply({
-            embeds: [embed],
-            components: componentes,
-            fetchReply: true
-        });
+            const msg = await interaction.reply({
+                embeds: [embed],
+                components: componentes,
+                fetchReply: true
+            });
 
-        // Sin páginas extra → no hay nada que coleccionar
-        if (componentes.length === 0) return;
+            if (componentes.length === 0) return;
 
-        // ── COLLECTOR DE PAGINACIÓN ────────────────────────────────────────
-        // Solo el invocador puede paginar. Expira en 2 minutos.
-        const collector = msg.createMessageComponentCollector({
-            filter: i => {
-                if (!i.customId.startsWith('queue_page_')) return false;
-                if (i.user.id !== interaction.user.id) {
-                    i.reply({
-                        content: '⚠️ Solo quien usó `/queue` puede navegar las páginas.',
-                        flags: MessageFlags.Ephemeral
-                    });
-                    return false;
+            const collector = msg.createMessageComponentCollector({
+                filter: i => {
+                    if (!i.customId.startsWith('queue_page_')) return false;
+                    if (i.user.id !== interaction.user.id) {
+                        i.reply({
+                            content: '⚠️ Solo quien usó `/queue` puede navegar las páginas.',
+                            flags: MessageFlags.Ephemeral
+                        });
+                        return false;
+                    }
+                    return true;
+                },
+                time: 120_000
+            });
+
+            collector.on('collect', async i => {
+                const pagina = parseInt(i.customId.replace('queue_page_', '')) || 0;
+                const queueActual = useQueue(interaction.guildId);
+                
+                if (!queueActual || !queueActual.isPlaying()) {
+                    await i.update({ content: '❌ La reproducción ha terminado.', embeds: [], components: [] });
+                    collector.stop();
+                    return;
                 }
-                return true;
-            },
-            time: 120_000
-        });
 
-        collector.on('collect', async i => {
-            const pagina = parseInt(i.customId.replace('queue_page_', '')) || 0;
+                const { embed: nuevoEmbed, componentes: nuevosComponentes } = construirPaginaCola(queueActual, interaction, pagina);
+                await i.deferUpdate();
+                await i.editReply({ embeds: [nuevoEmbed], components: nuevosComponentes });
+            });
 
-            const queueActual = useQueue(interaction.guildId);
-            if (!queueActual || !queueActual.isPlaying()) {
-                await i.update({ content: '❌ La reproducción ha terminado.', embeds: [], components: [] });
-                collector.stop();
-                return;
+            collector.on('end', async () => {
+                await interaction.editReply({ components: [] }).catch(() => null);
+            });
+
+        } 
+        // 3. MODO PC LOCAL (Sin Cola Nativa, muestra solo la actual)
+        else if (botChannel) {
+            try {
+                const response = await fetch(`http://100.127.221.32:3000/api/control?action=status`);
+                const status = await response.json();
+
+                if (status.error) throw new Error(status.error);
+
+                const embed = new EmbedBuilder()
+                    .setTitle(`🎼 Cola de Reproducción — Músculo Local`)
+                    .setColor('#00C853')
+                    .addFields({ 
+                        name: '▶️ Reproduciendo Ahora', 
+                        value: `**[${status.title}](${status.url})**\nAutor: \`${status.author}\`` 
+                    })
+                    .setFooter({ text: 'Nota: El motor de alta fidelidad de la PC no procesa la cola por lotes.' })
+                    .setTimestamp();
+                
+                return interaction.reply({ embeds: [embed] });
+
+            } catch (error) {
+                return interaction.reply({ 
+                    content: '❌ Error al comunicarse con la PC para leer la pista actual.', 
+                    flags: MessageFlags.Ephemeral 
+                });
             }
-
-            const { embed: nuevoEmbed, componentes: nuevosComponentes } = construirPaginaCola(queueActual, interaction, pagina);
-
-            // deferUpdate() + editReply() — correcto para mensajes NO efímeros con botones
-            await i.deferUpdate();
-            await i.editReply({ embeds: [nuevoEmbed], components: nuevosComponentes });
-        });
-
-        collector.on('end', async () => {
-            // Deshabilitar botones cuando el collector expire (ya no responden)
-            await interaction.editReply({ components: [] }).catch(() => null);
-        });
+        }
     },
 };

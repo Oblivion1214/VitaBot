@@ -150,28 +150,41 @@ async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, pl
         const nombreAMostrar = esPlaylist ? `la playlist **${trackTitle}**` : `**${trackTitle}**`;
 
         // 🌟 2. INTENTO PRINCIPAL: DELEGAR A LA PC LOCAL (Hi-Fi)
-        const pcOrdenUrl = `http://100.127.221.32:3000/api/play?url=${encodeURIComponent(urlParaPC)}&guildId=${interaction.guildId}&voiceId=${canalVoz.id}&bitrate=96`;
+        // Le enviamos a la PC el título y el autor en la orden HTTP
+        const pcOrdenUrl = `http://100.127.221.32:3000/api/play?url=${encodeURIComponent(urlParaPC)}&guildId=${interaction.guildId}&voiceId=${canalVoz.id}&bitrate=128&title=${encodeURIComponent(trackTitle)}&author=${encodeURIComponent(trackAuthor)}`;
 
         try {
-            // Le damos 3 segundos a la PC para que reciba la orden
+        try {
             await _mandarOrdenAPC(pcOrdenUrl, 3000);
 
-            // Si llegamos aquí, la PC aceptó la orden y se está conectando a Discord
-            await interaction.editReply(`✅ ${nombreAMostrar} delegada al **Músculo Local (Hi-Fi)**. ¡Cero carga para la VM!`);
+            // 🌟 FIX VISUAL: Construimos el Panel Bonito nosotros mismos
+            let thumbnail = '';
+            if (esPlaylist) thumbnail = entidadAReproducir.playlist.thumbnail;
+            else if (entidadAReproducir.tracks && entidadAReproducir.tracks.length > 0) thumbnail = entidadAReproducir.tracks[0].thumbnail;
+            else thumbnail = entidadAReproducir.thumbnail;
 
-            // Auditoría de éxito en PC
+            const embed = new EmbedBuilder()
+                .setTitle('🎵 Reproduciendo Ahora')
+                .setDescription(`**[${trackTitle}](${urlParaPC})**\nAutor: ${trackAuthor}`)
+                .setFooter({ text: `Motor: 🏠 PC Local (Lavalink Dedicado)` })
+                .setColor('#00C853');
+
+            if (thumbnail) embed.setThumbnail(thumbnail);
+
+            await interaction.editReply({ content: '', embeds: [embed] });
+
             await log(interaction.guild, {
                 categoria: 'musica',
                 titulo: esPlaylist ? 'Colección Delegada a PC' : 'Pista Delegada a PC',
                 descripcion: `${nombreAMostrar} procesada por la PC Local.`,
                 campos: [
                     { name: '🎤 Autor', value: trackAuthor, inline: true },
-                    { name: '💻 Motor', value: 'Windows (Tailscale)', inline: true }
+                    { name: '💻 Motor', value: 'Windows (Dedicado)', inline: true }
                 ],
                 usuario: interaction.user,
             });
 
-            return; // Termina la ejecución, la PC hará el resto
+            return; // Termina la ejecución
 
         } catch (errorPing) {
             // 🌟 3. FALLA LA PC -> MODO VM FALLBACK (Supervivencia)

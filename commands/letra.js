@@ -46,57 +46,44 @@ module.exports = {
 
     async execute(interaction) {
         const queue = useQueue(interaction.guildId);
+        const botChannel = interaction.guild.members.me.voice.channelId;
 
-        // 1. Verificación de música activa
-        if (!queue || !queue.isPlaying()) {
-            return interaction.reply({ 
-                content: '❌ No hay ninguna canción sonando para buscar su letra.', 
-                flags: MessageFlags.Ephemeral 
-            });
-        }
+        if (!queue && !botChannel) return interaction.reply({ content: '❌ No hay música.', flags: MessageFlags.Ephemeral });
 
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
-            const track = queue.currentTrack; //
-            const tituloLimpio = limpiarParaLyrics(track.title, track.author);
+            let tituloRaw, autorRaw;
 
-            // 2. Búsqueda usando el SDK de Genius (client.genius definido en index.js)
-            console.log(`[Cmd Letra] Buscando en Genius: "${tituloLimpio}" de "${track.author}"`);
+            if (queue && queue.isPlaying()) {
+                tituloRaw = queue.currentTrack.title;
+                autorRaw = queue.currentTrack.author;
+            } else {
+                const status = await fetch(`http://100.127.221.32:3000/api/control?action=status`).then(r=>r.json());
+                tituloRaw = status.title;
+                autorRaw = status.author;
+            }
+
+            const tituloLimpio = limpiarParaLyrics(tituloRaw, autorRaw); // Reutiliza tu función
+            console.log(`[Cmd Letra] Buscando: "${tituloLimpio}"`);
             
-            const búsquedas = await interaction.client.genius.songs.search(`${tituloLimpio} ${track.author}`);
-            const canciónEncontrada = búsquedas[0];
-
-            if (!canciónEncontrada) {
-                console.log(`[Cmd Letra] ❌ Sin resultados para: ${tituloLimpio}`);
-                return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
-            }
-
-            // 3. Obtención de la letra
-            const letra = await canciónEncontrada.lyrics();
-
-            if (!letra) {
-                return interaction.editReply(`❌ Encontré la canción, pero la letra no está disponible.`);
-            }
+            const búsquedas = await interaction.client.genius.songs.search(`${tituloLimpio} ${autorRaw}`);
+            if (!búsquedas[0]) return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
 
             console.log(`[Cmd Letra] ✅ Letra obtenida con éxito.`);
 
-            // 4. Formateo del Embed (Discord límite 4096)
+            const letra = await búsquedas[0].lyrics();
             const embed = new EmbedBuilder()
-                .setTitle(`🎤 Letras: ${canciónEncontrada.title}`)
-                .setAuthor({ name: canciónEncontrada.artist.name })
-                .setThumbnail(canciónEncontrada.image)
-                .setDescription(letra.length > 4000 
-                    ? letra.substring(0, 3997) + '...' 
-                    : letra)
-                .setColor('#FF9900')
-                .setFooter({ text: 'Sincronizado vía Genius SDK por VitaBot 🔨' });
+                .setTitle(`🎤 Letras: ${búsquedas[0].title}`)
+                .setAuthor({ name: búsquedas[0].artist.name })
+                .setThumbnail(búsquedas[0].image)
+                .setDescription(letra.length > 4000 ? letra.substring(0, 3997) + '...' : letra)
+                .setColor('#FF9900');
 
             return interaction.editReply({ embeds: [embed] });
-
         } catch (e) {
-            console.error('[Lyrics Command Error]:', e.message);
-            return interaction.editReply('❌ Mis circuitos de letras han fallado. Revisa la consola para más detalles.');
+            return interaction.editReply('❌ Mis circuitos de letras han fallado.');
         }
-    },
+    }
+
 };
