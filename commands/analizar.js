@@ -3,7 +3,7 @@ const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js'
 const { dominiosSeguros, escanearEnlace, textoVirusTotal, textoIPQS } = require('../utils/linkGuard');
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 
-// Inicializamos el motor de Gemini usando tu variable de entorno
+// Inicializamos el motor de Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 module.exports = {
@@ -47,12 +47,12 @@ module.exports = {
             const { visual, ruta, resultados } = reporte;
             const { statsVT, resIPQS, esPhishingGoogle, resHaus, scoreCompuesto, esServicioNube, tieneExtension } = resultados;
 
-            // ── 4. EL CEREBRO DE VITA (Gemini AI con Cadena de Rescate) ────────
-            let veredictoIA = '⏳ Procesando datos mágicos...';
+            // ── 4. EL CEREBRO DE VITA (Gemini AI con Rescate Manual) ───────
+            let veredictoIA = '';
+            let exitoIA = false; // Bandera para saber si la IA logró responder
             
-            // Definimos nuestros modelos de mayor a menor prioridad
-            const modelosParaProbar = ["gemini-flash-latest","gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
-            let aiResult = null;
+            // Nombres de modelos corregidos para el SDK actual
+            const modelosParaProbar = ["gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
 
             const promptForense = `
             Analiza este enlace: "${url}"
@@ -74,34 +74,45 @@ module.exports = {
                         systemInstruction: `Eres Vita, la Caballera del Martillo de Hierro. Tienes una personalidad tsundere, directa, firme y orgullosa. 
                         Para este comando, estás operando tu martillo mágico 'Graf Eisen' en modo 'Análisis Forense' para proteger el servidor.
                         Tu trabajo es leer los datos técnicos de un enlace y darle al usuario un veredicto claro, rápido y sin rodeos de si es seguro o peligroso.
-                        Usa máximo 3 o 4 oraciones. Sé contundente. Si el enlace es peligroso, adviérteles bruscamente y usa el emoji de tu martillo (🔨) para indicar que lo aplastarás si lo envían públicamente. Si es seguro, diles que pueden pasar pero que no se confíen demasiado.`,
+                        Usa máximo 3 o 4 oraciones. Sé contundente. Si el enlace es peligroso, adviérteles bruscamente y usa el emoji de tu martillo (🔨).`,
                         safetySettings: [
-                            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-                            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+                            // 🌟 APAGAMOS LOS FILTROS: Es un bot de ciberseguridad, necesita hablar de malware sin ser censurado
+                            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+                            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+                            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE }
                         ],
                     });
 
-                    // Intentamos generar el contenido
-                    aiResult = await model.generateContent(promptForense);
-                    
-                    // Si llegamos aquí, el modelo funcionó. Guardamos y salimos del bucle.
-                    console.log(`[Gemini AI] Análisis exitoso usando el modelo: ${nombreModelo}`);
+                    const aiResult = await model.generateContent(promptForense);
                     veredictoIA = aiResult.response.text();
+                    exitoIA = true; // Confirmamos que se obtuvo el texto correctamente
+                    console.log(`[Gemini AI] Análisis exitoso usando el modelo: ${nombreModelo}`);
                     break; 
 
                 } catch (aiError) {
-                    console.warn(`[Gemini AI] El modelo ${nombreModelo} falló o está saturado (${aiError.message}). Intentando con el siguiente...`);
+                    console.warn(`[Gemini AI] El modelo ${nombreModelo} falló: ${aiError.message}`);
                 }
             }
 
-            // Si el bucle terminó y aiResult sigue siendo null, significa que los 3 modelos fallaron
-            if (!aiResult) {
-                console.error('[Gemini AI] Caída total: Todos los modelos de la cadena de rescate fallaron.');
-                veredictoIA = '⚠️ *¡Hmph! Todos mis circuitos de análisis están saturados en este momento. Tendrás que leer los datos técnicos por ti mismo abajo.*';
+            // 🌟 5. EL RESPALDO DEFINITIVO (Datos de linkGuard.js)
+            if (!exitoIA) {
+                console.error('[Gemini AI] Caída total de modelos. Activando veredicto manual de respaldo.');
+                
+                let textoRespaldo = `⚠️ *[Modo de Emergencia Automático]*\nMis circuitos de lenguaje están saturados, así que te daré los datos directos:\n\n`;
+                
+                if (reporte.detectado) {
+                    textoRespaldo += `🔨 **¡Peligro Confirmado!** El escáner detectó una amenaza real. Motivo: **${reporte.motivo}**. Ni se te ocurra abrir esto.`;
+                } else if ((scoreCompuesto?.score ?? 0) >= 25) {
+                    textoRespaldo += `⚠️ **Precaución.** El enlace tiene un riesgo de **${scoreCompuesto.score}/100**. Motivo principal: **${reporte.motivo || 'Indicadores heurísticos sospechosos'}**.`;
+                } else {
+                    textoRespaldo += `✅ **Seguro.** Los motores no encontraron amenazas activas. Score de riesgo: **0/100**. Aún así, mantén los ojos abiertos.`;
+                }
+                
+                veredictoIA = textoRespaldo;
             }
-            // ───────────────────────────────────────────────────────────────────
 
-            // ── 5. Título y colores ────────────────────────────────────────
+            // ── 6. Construir embed final ───────────────────────────────────
             let titulo;
             if (reporte.detectado) titulo = `🚨 Amenaza Confirmada — Nivel ${scoreCompuesto?.nivel ?? reporte.nivel}`;
             else if ((scoreCompuesto?.score ?? 0) >= 25) titulo = `⚠️ Alerta Preventiva — Revisar con precaución`;
@@ -127,54 +138,23 @@ module.exports = {
             if (tieneExtension) alertasExtra.push(`📎 Apunta a un archivo ejecutable: \`${urlObj.pathname.split('/').pop()}\``);
             if (esServicioNube) alertasExtra.push('📦 Usa un servicio de almacenamiento o acortador externo');
 
-            // ── 6. Construir embed ────────────────────────────────────────
             const embed = new EmbedBuilder()
                 .setTitle(titulo)
                 .setURL(visual?.reporte ?? urlVT)
                 .setColor(colores[nivelKey] ?? '#57F287')
                 .addFields(
-                    // 🌟 AQUÍ COLOCAMOS EL VEREDICTO DE VITA COMO LO MÁS IMPORTANTE
                     {
                         name: '🧠 Veredicto de Vita (IA)',
                         value: veredictoIA,
                         inline: false
                     },
-                    // Los datos duros por si algún moderador humano quiere verificar
-                    {
-                        name: '🛑 Google Safe Browsing',
-                        value: esPhishingGoogle ? '🚨 Phishing' : '✅ Limpio',
-                        inline: true
-                    },
-                    {
-                        name: '🛡️ VirusTotal',
-                        value: textoVirusTotal(statsVT),
-                        inline: true
-                    },
-                    {
-                        name: '📊 IPQS',
-                        value: textoIPQS(resIPQS),
-                        inline: true
-                    },
-                    {
-                        name: '🦠 URLhaus',
-                        value: textoHaus,
-                        inline: true
-                    },
-                    {
-                        name: '📸 urlscan.io',
-                        value: visual ? `[Ver captura](${visual.reporte})` : '⚪ Sin captura',
-                        inline: true
-                    },
-                    ...(alertasExtra.length > 0 ? [{
-                        name: '⚠️ Notas Adicionales',
-                        value: alertasExtra.join('\n'),
-                        inline: false
-                    }] : []),
-                    {
-                        name: '🛤️ Redirecciones',
-                        value: textoRuta,
-                        inline: false
-                    }
+                    { name: '🛑 Google Safe Browsing', value: esPhishingGoogle ? '🚨 Phishing' : '✅ Limpio', inline: true },
+                    { name: '🛡️ VirusTotal', value: textoVirusTotal(statsVT), inline: true },
+                    { name: '📊 IPQS', value: textoIPQS(resIPQS), inline: true },
+                    { name: '🦠 URLhaus', value: textoHaus, inline: true },
+                    { name: '📸 urlscan.io', value: visual ? `[Ver captura](${visual.reporte})` : '⚪ Sin captura', inline: true },
+                    ...(alertasExtra.length > 0 ? [{ name: '⚠️ Notas Adicionales', value: alertasExtra.join('\n'), inline: false }] : []),
+                    { name: '🛤️ Redirecciones', value: textoRuta, inline: false }
                 )
                 .setFooter({ text: `Graf Eisen Shield v8.0 + Cerebro IA` })
                 .setTimestamp();
