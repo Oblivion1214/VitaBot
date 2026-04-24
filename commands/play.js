@@ -154,7 +154,6 @@ async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, pl
         const pcOrdenUrl = `http://100.127.221.32:3000/api/play?url=${encodeURIComponent(urlParaPC)}&guildId=${interaction.guildId}&voiceId=${canalVoz.id}&bitrate=128&title=${encodeURIComponent(trackTitle)}&author=${encodeURIComponent(trackAuthor)}`;
 
         try {
-        try {
             await _mandarOrdenAPC(pcOrdenUrl, 3000);
 
             // 🌟 FIX VISUAL: Construimos el Panel Bonito nosotros mismos
