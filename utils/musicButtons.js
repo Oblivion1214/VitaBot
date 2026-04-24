@@ -124,24 +124,35 @@ async function manejarBotonesMusica(interaction, player) {
                 const currentTrack = queue.currentTrack;
                 const tituloLimpio = limpiarParaLyrics(currentTrack.title, currentTrack.author);
 
-                const searches = await interaction.client.genius.songs.search(`${tituloLimpio} ${currentTrack.author}`);
-                const firstSong = searches[0];
-                if (!firstSong) return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
+                try {
+                    const searches = await interaction.client.genius.songs.search(`${tituloLimpio} ${currentTrack.author}`);
+                    const firstSong = searches[0];
+                    if (!firstSong) return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
 
-                const lyrics = await firstSong.lyrics();
-                const lyricsEmbed = new EmbedBuilder()
-                    .setTitle(`🎤 Letras: ${firstSong.title}`)
-                    .setAuthor({ name: firstSong.artist.name })
-                    .setThumbnail(currentTrack.thumbnail)
-                    .setDescription(lyrics.length > 4096 ? lyrics.substring(0, 4090) + '...' : lyrics)
-                    .setColor('#FF9900')
-                    .setFooter({ text: 'Powered by Genius API & VitaBot 🔨' });
+                    const lyrics = await firstSong.lyrics();
+                    const lyricsEmbed = new EmbedBuilder()
+                        .setTitle(`🎤 Letras: ${firstSong.title}`)
+                        .setAuthor({ name: firstSong.artist.name })
+                        .setThumbnail(currentTrack.thumbnail)
+                        .setDescription(lyrics.length > 4096 ? lyrics.substring(0, 4090) + '...' : lyrics)
+                        .setColor('#FF9900')
+                        .setFooter({ text: 'Powered by Genius API & VitaBot 🔨' });
 
-                return interaction.editReply({ embeds: [lyricsEmbed] });
+                    return interaction.editReply({ embeds: [lyricsEmbed] });
+                } catch (geniusError) {
+                    console.error('[Genius API Error VM]:', geniusError.message);
+                    return interaction.editReply('❌ El servidor de Genius rechazó la búsqueda o falló (Error 403). Intenta más tarde.');
+                }
             }
 
         } catch (e) {
             console.error('[Botones VM Error]:', e.message);
+            // 🌟 MANEJO SEGURO DE ERRORES:
+            if (interaction.deferred || interaction.replied) {
+                return interaction.editReply({ content: '❌ Ocurrió un error al procesar el botón en la VM.' });
+            } else {
+                return interaction.reply({ content: '❌ Ocurrió un error al procesar el botón en la VM.', flags: MessageFlags.Ephemeral });
+            }
         }
     } 
     
@@ -211,24 +222,36 @@ async function manejarBotonesMusica(interaction, player) {
                 if (status.error) return interaction.editReply('❌ No hay datos de la canción en la PC.');
 
                 const tituloLimpio = limpiarParaLyrics(status.title, status.author);
-                const searches = await interaction.client.genius.songs.search(`${tituloLimpio} ${status.author}`);
                 
-                if (!searches[0]) return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
-                const lyrics = await searches[0].lyrics();
-                
-                const lyricsEmbed = new EmbedBuilder()
-                    .setTitle(`🎤 Letras: ${searches[0].title}`)
-                    .setAuthor({ name: searches[0].artist.name })
-                    .setDescription(lyrics.length > 4096 ? lyrics.substring(0, 4090) + '...' : lyrics)
-                    .setColor('#00C853')
-                    .setFooter({ text: 'Powered by Genius API & VitaBot 🏠' });
+                // 🌟 Aislamos la consulta a Genius en su propio try-catch para atrapar el Error 403
+                try {
+                    const searches = await interaction.client.genius.songs.search(`${tituloLimpio} ${status.author}`);
+                    
+                    if (!searches[0]) return interaction.editReply(`❌ No encontré letras para: **${tituloLimpio}**.`);
+                    const lyrics = await searches[0].lyrics();
+                    
+                    const lyricsEmbed = new EmbedBuilder()
+                        .setTitle(`🎤 Letras: ${searches[0].title}`)
+                        .setAuthor({ name: searches[0].artist.name })
+                        .setDescription(lyrics.length > 4096 ? lyrics.substring(0, 4090) + '...' : lyrics)
+                        .setColor('#00C853')
+                        .setFooter({ text: 'Powered by Genius API & VitaBot 🏠' });
 
-                return interaction.editReply({ embeds: [lyricsEmbed] });
+                    return interaction.editReply({ embeds: [lyricsEmbed] });
+                } catch (geniusError) {
+                    console.error('[Genius API Error PC]:', geniusError.message);
+                    return interaction.editReply('❌ El servidor de Genius rechazó la búsqueda o falló (Error 403). Intenta más tarde.');
+                }
             }
 
         } catch (e) {
             console.error('[Botones PC Error]:', e.message);
-            return interaction.reply({ content: '❌ Error de comunicación remota con la PC local.', flags: MessageFlags.Ephemeral });
+            // 🌟 MANEJO SEGURO DE ERRORES: Verificamos si ya deferimos la respuesta
+            if (interaction.deferred || interaction.replied) {
+                return interaction.editReply({ content: '❌ Error de comunicación remota con la PC local.' });
+            } else {
+                return interaction.reply({ content: '❌ Error de comunicación remota con la PC local.', flags: MessageFlags.Ephemeral });
+            }
         }
     }
 }
