@@ -1,5 +1,4 @@
-// commands/play.js — Sistema de Selección de Alta Fidelidad
-const http = require('http'); // ⬅️ AÑADE ESTA LÍNEA AQUÍ
+// commands/play.js — Sistema de Selección de Alta Fidelidad y Enrutamiento Híbrido
 const { 
     SlashCommandBuilder, 
     MessageFlags, 
@@ -9,7 +8,7 @@ const {
 } = require('discord.js');
 const { useMainPlayer } = require('discord-player');
 const { log, sanitizeErrorMessage } = require('../utils/logger');
-const decirCmd = require('./decir.js'); // Importamos para gestionar conexiones TTS y evitar conflictos
+const decirCmd = require('./decir.js'); 
 
 module.exports = {
     cooldown: 5,
@@ -69,7 +68,6 @@ module.exports = {
 
         // 3. LÓGICA DE MENÚ (Solo si es búsqueda por texto)
         if (!busqueda.startsWith('http')) {
-            // Filtramos tracks sin URL válida para evitar opciones rotas en el menú
             const topTracks = resultado.tracks
                 .filter(t => t.url && t.url.startsWith('http'))
                 .slice(0, 10);
@@ -102,7 +100,7 @@ module.exports = {
             collector.on('collect', async i => {
                 const trackElegida = topTracks.find(t => t.url === i.values[0]);
                 await i.update({ content: `⌛ Procesando: **${trackElegida.title}**...`, components: [] });
-                // Pasamos el track directamente — iniciarReproduccion detecta que es un Track
+                // Pasamos el track directamente
                 return await iniciarReproduccion(trackElegida, interaction, canalVoz, player);
             });
 
@@ -115,7 +113,7 @@ module.exports = {
             return;
         }
 
-        // 4. REPRODUCCIÓN DIRECTA (Si es un link)
+        // 4. REPRODUCCIÓN DIRECTA (Si es un link de YouTube o Spotify)
         return await iniciarReproduccion(resultado, interaction, canalVoz, player);
     },
 };
@@ -125,73 +123,92 @@ module.exports = {
 // ─────────────────────────────────────────────────────────────────
 async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, player) {
     try {
-        // 1. Extraer datos de lo que vamos a reproducir (Track o Playlist)
+        // 1. Extraer y empaquetar los datos de lo que vamos a reproducir (Track o Playlist)
         const esPlaylist = !!(entidadAReproducir?.playlist);
-        let urlParaPC = '';
+        let tracksParaEnviar = [];
         let trackTitle = '';
         let trackAuthor = '';
-        let cantidadPistas = 1;
 
         if (esPlaylist) {
-            urlParaPC = entidadAReproducir.playlist.url;
             trackTitle = entidadAReproducir.playlist.title;
             trackAuthor = entidadAReproducir.playlist.author?.name || 'YouTube';
-            cantidadPistas = entidadAReproducir.tracks?.length || 1;
+            tracksParaEnviar = entidadAReproducir.tracks.map(t => ({ 
+                url: t.url, title: t.title, author: t.author, duration: t.duration, thumbnail: t.thumbnail 
+            }));
         } else if (entidadAReproducir.tracks && entidadAReproducir.tracks.length > 0) {
-            urlParaPC = entidadAReproducir.tracks[0].url;
-            trackTitle = entidadAReproducir.tracks[0].title;
-            trackAuthor = entidadAReproducir.tracks[0].author;
+            // Resultado de búsqueda o link directo (solo el primero)
+            const t = entidadAReproducir.tracks[0];
+            trackTitle = t.title;
+            trackAuthor = t.author;
+            tracksParaEnviar = [{ url: t.url, title: t.title, author: t.author, duration: t.duration, thumbnail: t.thumbnail }];
         } else if (entidadAReproducir.url) {
-            urlParaPC = entidadAReproducir.url;
+            // Objeto Track directo (viene del menú de selección)
             trackTitle = entidadAReproducir.title;
             trackAuthor = entidadAReproducir.author;
+            tracksParaEnviar = [{ 
+                url: entidadAReproducir.url, title: entidadAReproducir.title, 
+                author: entidadAReproducir.author, duration: entidadAReproducir.duration, 
+                thumbnail: entidadAReproducir.thumbnail 
+            }];
         }
 
         const nombreAMostrar = esPlaylist ? `la playlist **${trackTitle}**` : `**${trackTitle}**`;
 
-        // 🌟 2. INTENTO PRINCIPAL: DELEGAR A LA PC LOCAL (Hi-Fi)
-        // Le enviamos a la PC el título y el autor en la orden HTTP
-        const pcOrdenUrl = `http://100.127.221.32:3000/api/play?url=${encodeURIComponent(urlParaPC)}&guildId=${interaction.guildId}&voiceId=${canalVoz.id}&bitrate=128&title=${encodeURIComponent(trackTitle)}&author=${encodeURIComponent(trackAuthor)}`;
+        // 🌟 2. INTENTO PRINCIPAL: DELEGAR A LA PC LOCAL (Hi-Fi) vía Paquete JSON
+        const payload = {
+            guildId: interaction.guildId,
+            voiceId: canalVoz.id,
+            tracks: tracksParaEnviar
+        };
 
         try {
-            await _mandarOrdenAPC(pcOrdenUrl, 3000);
+            // Petición HTTP a la PC local (Máximo 4 segundos de paciencia)
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
 
-            // 🌟 FIX VISUAL: Construimos el Panel Bonito nosotros mismos
-            let thumbnail = '';
-            if (esPlaylist) thumbnail = entidadAReproducir.playlist.thumbnail;
-            else if (entidadAReproducir.tracks && entidadAReproducir.tracks.length > 0) thumbnail = entidadAReproducir.tracks[0].thumbnail;
-            else thumbnail = entidadAReproducir.thumbnail;
+            const respuesta = await fetch(`http://100.127.221.32:3000/api/play`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
 
+            if (!respuesta.ok) throw new Error(`Status ${respuesta.status}`);
+
+            // ── ÉXITO EN LA PC: Armamos el panel bonito en la VM ──
+            const primeraCancion = tracksParaEnviar[0];
             const embed = new EmbedBuilder()
-                .setTitle('🎵 Reproduciendo Ahora')
-                .setDescription(`**[${trackTitle}](${urlParaPC})**\nAutor: ${trackAuthor}`)
-                .setFooter({ text: `Motor: 🏠 PC Local (Lavalink Dedicado)` })
+                .setTitle(esPlaylist ? `💿 Playlist Añadida: ${trackTitle}` : '🎵 Añadido a la Cola')
+                .setDescription(`**[${primeraCancion.title}](${primeraCancion.url})**\nAutor: ${primeraCancion.author}\n${esPlaylist ? `*Y ${tracksParaEnviar.length - 1} pistas más...*` : ''}`)
+                .setFooter({ text: `Motor: 🏠 PC Local (Hi-Fi)` })
                 .setColor('#00C853');
 
-            if (thumbnail) embed.setThumbnail(thumbnail);
+            if (primeraCancion.thumbnail) embed.setThumbnail(primeraCancion.thumbnail);
 
             await interaction.editReply({ content: '', embeds: [embed] });
 
+            // Auditoría de éxito en la PC
             await log(interaction.guild, {
                 categoria: 'musica',
                 titulo: esPlaylist ? 'Colección Delegada a PC' : 'Pista Delegada a PC',
                 descripcion: `${nombreAMostrar} procesada por la PC Local.`,
                 campos: [
-                    { name: '🎤 Autor', value: trackAuthor, inline: true },
-                    { name: '💻 Motor', value: 'Windows (Dedicado)', inline: true }
+                    { name: '🎤 Pistas', value: `${tracksParaEnviar.length}`, inline: true },
+                    { name: '💻 Motor', value: 'Windows (Tailscale)', inline: true }
                 ],
                 usuario: interaction.user,
             });
 
-            return; // Termina la ejecución
+            return; // Terminamos aquí, la PC pone la música.
 
         } catch (errorPing) {
-            // 🌟 3. FALLA LA PC -> MODO VM FALLBACK (Supervivencia)
+            // 🌟 3. FALLA LA PC -> MODO VM FALLBACK (Supervivencia a 32-64kbps)
             console.warn(`[Router] ⚠️ PC no disponible. Activando Fallback. Razón: ${errorPing.message}`);
             
-            await interaction.editReply(`⚠️ **[Fallback]** El servidor principal no responde. Reproduciendo ${nombreAMostrar} desde la VM (Modo Supervivencia a 32kbps)...`);
+            await interaction.editReply({ content: `⚠️ **[Fallback]** El servidor Hi-Fi no responde. Reproduciendo ${nombreAMostrar} desde la VM (Modo de Supervivencia)...`, embeds: [] });
 
-            // Arrancamos el discord-player en la VM
+            // Ejecuta el motor original de la VM
             const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
                 nodeOptions: {
                     metadata: { canal: interaction.channel, guildId: interaction.guildId },
@@ -209,7 +226,7 @@ async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, pl
                 titulo: '⚠️ VM Fallback Activado',
                 descripcion: `Se usó la Máquina Virtual porque la PC no contestó.`,
                 campos: [
-                    { name: '🎵 Pista', value: track.title, inline: true },
+                    { name: '🎵 Pista/Playlist', value: trackTitle, inline: true },
                     { name: '📶 Calidad', value: `Reducida`, inline: true }
                 ],
                 usuario: interaction.user,
@@ -220,27 +237,16 @@ async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, pl
         const errorLimpio = sanitizeErrorMessage(errorCritico.message);
         console.error('[Error de Audio]:', errorLimpio);
 
+        await log(interaction.guild, {
+            categoria: 'sistema',
+            titulo: 'Fallo de Ingestión',
+            descripcion: 'Graf Eisen no pudo procesar la fuente de audio en ningún motor.',
+            error: errorLimpio,
+            usuario: interaction.user
+        }).catch(() => null);
+
         if (interaction.deferred || interaction.replied) {
-            await interaction.editReply('❌ ¡Fallo crítico global! Ni la PC ni la VM pudieron reproducir la canción.');
+            await interaction.editReply({ content: '❌ ¡Fallo crítico global! Ni la PC ni la VM pudieron reproducir la canción.', embeds: [] });
         }
     }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// FUNCIÓN AUXILIAR PARA HABLAR CON LA PC POR TAILSCALE
-// ─────────────────────────────────────────────────────────────────
-function _mandarOrdenAPC(url, timeoutMs) {
-    return new Promise((resolve, reject) => {
-        const req = http.get(url, (res) => {
-            if (res.statusCode === 200) resolve();
-            else reject(new Error(`HTTP Status ${res.statusCode}`));
-        });
-
-        req.setTimeout(timeoutMs, () => {
-            req.destroy();
-            reject(new Error('Timeout de Tailscale'));
-        });
-
-        req.on('error', (err) => reject(err));
-    });
 }
