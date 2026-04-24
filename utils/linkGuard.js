@@ -301,8 +301,10 @@ async function escanearEnlace(link) {
             reporte.motivo    = `IPQualityScore: Score de riesgo ${resIPQSData.risk_score}/100${resIPQSData.phishing ? ' · Phishing confirmado' : ''}${resIPQSData.malware ? ' · Malware confirmado' : ''}`;
             reporte.nivel     = 'ALTO';
         } else if (tieneExtension) {
-            // Extensión ejecutable sin confirmación de APIs: alerta, no detección
-            reporte.motivo = `Extensión de riesgo: \`${urlObj.pathname.split('/').pop()}\` (sin confirmación de APIs)`;
+            // 🌟 FIX: Ahora los ejecutables crudos SÍ activan la cuarentena inmediata (Zero-Day Protection)
+            reporte.detectado = true; 
+            reporte.motivo    = `Archivo posiblemente peligroso, verificación humana necesaria: Extensión ejecutable \`${urlObj.pathname.split('/').pop()}\` bloqueada por seguridad preventiva.`;
+            reporte.nivel     = '???'; // El nivel real se determinará en la revisión humana, ya que podría ser un falso positivo legítimo.
         } else if (esServicioNube) {
             reporte.motivo = 'Servicio de almacenamiento externo (sin confirmación de APIs)';
         }
