@@ -207,7 +207,7 @@ async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, pl
             // 🌟 3. FALLA LA PC -> MODO VM FALLBACK (Supervivencia a 32-64kbps)
             console.warn(`[Router] ⚠️ PC no disponible. Activando Fallback. Razón: ${errorPing.message}`);
             
-            await interaction.editReply({ content: `⚠️ **[Fallback]** El servidor Hi-Fi no responde. Reproduciendo ${nombreAMostrar} desde la VM (Modo de Supervivencia)...`, embeds: [] });
+            await interaction.editReply({ content: `⚠️ **[Fallback]** El servidor de musica no responde. Reproduciendo ${nombreAMostrar} desde la VM (Modo Emergencia Activado)...\n Si el audio dura mas de 2 minutos, se pueden experimentar problemas de calidad. Se aconseja no reproducir audios de mas de 2 minutos de duracion.`, embeds: [] });
 
             // Ejecuta el motor original de la VM
             const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
