@@ -346,9 +346,7 @@ async function ejecutarCuarentena(message, reporte) {
 
     await message.channel.send(
         `🛡️ **Cuarentena:** Enlace de ${message.author} bloqueado.\n` +
-        `Motivo: \`${reporte.motivo}\` | Score: **${scoreCompuesto?.score ?? '?'}/100**` +
-        `🔍 **¿Quieres ver el reporte forense de la IA?** Copia y pega este comando:\n` +
-        `\`\`\`/analizar url:${reporte.cleanUrl}\`\`\``
+        `Motivo: \`${reporte.motivo}\` | Score: **${scoreCompuesto?.score ?? '?'}/100**`
     ).catch(() => null);
 
     const row = new ActionRowBuilder().addComponents(
@@ -369,7 +367,9 @@ async function ejecutarCuarentena(message, reporte) {
     const logMsg = await log(message.guild, {
         categoria: 'sistema',
         titulo:    `🚨 Alerta de Seguridad — ${scoreCompuesto?.emoji ?? ''} ${scoreCompuesto?.nivel ?? reporte.nivel}`,
-        descripcion: `Enlace bloqueado automáticamente. Un moderador debe revisar en los próximos **10 minutos**.`,
+        descripcion: `Enlace bloqueado automáticamente. Un moderador debe revisar en los próximos **10 minutos**.`+
+        `\n🔍 **¿Quieres ver el reporte analizado por la IA?** Copia y pega este comando:\n` +
+        `\`\`\`/analizar url:${reporte.cleanUrl}\`\`\``,
         campos: [
             {
                 name:   '⚠️ Score de Riesgo',
