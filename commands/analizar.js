@@ -47,42 +47,59 @@ module.exports = {
             const { visual, ruta, resultados } = reporte;
             const { statsVT, resIPQS, esPhishingGoogle, resHaus, scoreCompuesto, esServicioNube, tieneExtension } = resultados;
 
-            // ── 4. EL CEREBRO DE VITA (Gemini AI) ──────────────────────────
+            // ── 4. EL CEREBRO DE VITA (Gemini AI con Cadena de Rescate) ────────
             let veredictoIA = '⏳ Procesando datos mágicos...';
-            try {
-                const model = genAI.getGenerativeModel({ 
-                    model: "gemini-flash-latest",
-                    // Le damos a Vita instrucciones específicas de cómo actuar en modo "Seguridad"
-                    systemInstruction: `Eres Vita, la Caballera del Martillo de Hierro. Tienes una personalidad tsundere, directa, firme y orgullosa. 
-                    Para este comando, estás operando tu martillo mágico 'Graf Eisen' en modo 'Análisis Forense' para proteger el servidor.
-                    Tu trabajo es leer los datos técnicos de un enlace y darle al usuario un veredicto claro, rápido y sin rodeos de si es seguro o peligroso.
-                    Usa máximo 3 o 4 oraciones. Sé contundente. Si el enlace es peligroso, adviérteles bruscamente y usa el emoji de tu martillo (🔨) para indicar que lo aplastarás si lo envían públicamente. Si es seguro, diles que pueden pasar pero que no se confíen demasiado.`,
-                    safetySettings: [
-                        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-                        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-                    ],
-                });
+            
+            // Definimos nuestros modelos de mayor a menor prioridad
+            const modelosParaProbar = ["gemini-flash-latest","gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
+            let aiResult = null;
 
-                // Le pasamos los datos crudos a la IA
-                const promptForense = `
-                Analiza este enlace: "${url}"
-                Datos extraídos por los sensores de Graf Eisen:
-                - Redirecciones ocultas: ${ruta.length > 1 ? ruta.join(' -> ') : 'Ninguna'}
-                - Archivo ejecutable/sospechoso directo: ${tieneExtension ? 'Sí' : 'No'}
-                - Alojado en nube pública (ej. Mediafire, Mega): ${esServicioNube ? 'Sí' : 'No'}
-                - VirusTotal: ${statsVT ? `Maliciosos: ${statsVT.malicious}, Sospechosos: ${statsVT.suspicious}, Limpios: ${statsVT.harmless}` : 'Sin datos'}
-                - IPQualityScore: ${resIPQS ? `Riesgo: ${resIPQS.risk_score}/100, Phishing: ${resIPQS.phishing}, Malware: ${resIPQS.malware}` : 'Sin datos'}
-                - Google Safe Browsing: ${esPhishingGoogle ? 'DETECTA PHISHING' : 'Limpio'}
-                - URLhaus: ${resHaus?.url_status === 'online' ? 'MALWARE ACTIVO' : 'Limpio'}
-                
-                Danos tu veredicto final.`;
+            const promptForense = `
+            Analiza este enlace: "${url}"
+            Datos extraídos por los sensores de Graf Eisen:
+            - Redirecciones ocultas: ${ruta.length > 1 ? ruta.join(' -> ') : 'Ninguna'}
+            - Archivo ejecutable/sospechoso directo: ${tieneExtension ? 'Sí' : 'No'}
+            - Alojado en nube pública (ej. Mediafire, Mega): ${esServicioNube ? 'Sí' : 'No'}
+            - VirusTotal: ${statsVT ? `Maliciosos: ${statsVT.malicious}, Sospechosos: ${statsVT.suspicious}, Limpios: ${statsVT.harmless}` : 'Sin datos'}
+            - IPQualityScore: ${resIPQS ? `Riesgo: ${resIPQS.risk_score}/100, Phishing: ${resIPQS.phishing}, Malware: ${resIPQS.malware}` : 'Sin datos'}
+            - Google Safe Browsing: ${esPhishingGoogle ? 'DETECTA PHISHING' : 'Limpio'}
+            - URLhaus: ${resHaus?.url_status === 'online' ? 'MALWARE ACTIVO' : 'Limpio'}
+            
+            Danos tu veredicto final.`;
 
-                const aiResult = await model.generateContent(promptForense);
-                veredictoIA = aiResult.response.text();
-            } catch (aiError) {
-                console.error('[Gemini AI Analizar Error]:', aiError.message);
-                veredictoIA = '⚠️ *Mis circuitos de análisis fallaron. Tendrás que leer los datos técnicos por ti mismo abajo.*';
+            for (const nombreModelo of modelosParaProbar) {
+                try {
+                    const model = genAI.getGenerativeModel({ 
+                        model: nombreModelo,
+                        systemInstruction: `Eres Vita, la Caballera del Martillo de Hierro. Tienes una personalidad tsundere, directa, firme y orgullosa. 
+                        Para este comando, estás operando tu martillo mágico 'Graf Eisen' en modo 'Análisis Forense' para proteger el servidor.
+                        Tu trabajo es leer los datos técnicos de un enlace y darle al usuario un veredicto claro, rápido y sin rodeos de si es seguro o peligroso.
+                        Usa máximo 3 o 4 oraciones. Sé contundente. Si el enlace es peligroso, adviérteles bruscamente y usa el emoji de tu martillo (🔨) para indicar que lo aplastarás si lo envían públicamente. Si es seguro, diles que pueden pasar pero que no se confíen demasiado.`,
+                        safetySettings: [
+                            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+                            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+                        ],
+                    });
+
+                    // Intentamos generar el contenido
+                    aiResult = await model.generateContent(promptForense);
+                    
+                    // Si llegamos aquí, el modelo funcionó. Guardamos y salimos del bucle.
+                    console.log(`[Gemini AI] Análisis exitoso usando el modelo: ${nombreModelo}`);
+                    veredictoIA = aiResult.response.text();
+                    break; 
+
+                } catch (aiError) {
+                    console.warn(`[Gemini AI] El modelo ${nombreModelo} falló o está saturado (${aiError.message}). Intentando con el siguiente...`);
+                }
             }
+
+            // Si el bucle terminó y aiResult sigue siendo null, significa que los 3 modelos fallaron
+            if (!aiResult) {
+                console.error('[Gemini AI] Caída total: Todos los modelos de la cadena de rescate fallaron.');
+                veredictoIA = '⚠️ *¡Hmph! Todos mis circuitos de análisis están saturados en este momento. Tendrás que leer los datos técnicos por ti mismo abajo.*';
+            }
+            // ───────────────────────────────────────────────────────────────────
 
             // ── 5. Título y colores ────────────────────────────────────────
             let titulo;
