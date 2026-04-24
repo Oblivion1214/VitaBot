@@ -269,7 +269,9 @@ async function log(guild, { categoria = 'general', titulo, descripcion, campos =
             .setDescription(descripcion || 'Sin descripción disponible.')
             .setColor(COLORS[categoria] ?? COLORS.general)
             .setTimestamp()
-            .setFooter({ text: 'VitaBot Shield 🔨 — Logs Sanitizados' });
+            .setFooter({ text: 'VitaBot Shield 🔨 — Logs Sanitizados' + 
+                'EL SISTEMA NO ES PERFECTO: Siempre revisa los enlaces con tu propio juicio, especialmente si el veredicto de Vita es ambiguo o si el enlace tiene un score de riesgo moderado.' 
+            });
 
         if (usuario) {
             embed.setAuthor({

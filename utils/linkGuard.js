@@ -12,7 +12,7 @@ const dominiosSeguros = [
     'soundcloud.com', 'apple.com', 'music.apple.com', 'netflix.com', 'vimeo.com',
     'github.com', 'githubusercontent.com', 'gitlab.com', 'bitbucket.org',
     'google.com', 'accounts.google.com', 'googleusercontent.com', 'gstatic.com', 'bing.com',
-    'cloudflare.com', 'steamcommunity.com', 'steampowered.com', 'tenor.com', 'giphy.com',
+    'cloudflare.com', 'tenor.com', 'giphy.com',
     'wikipedia.org', 'wikimedia.org', 'twitch.tv', 'reddit.com', 'redd.it',
     'spotify.com', 'open.spotify.com', 'twitter.com', 'x.com', 'instagram.com',
     'tiktok.com', 'linkedin.com', 'amazon.com', 'microsoft.com', 'office.com'
@@ -214,7 +214,12 @@ async function escanearEnlace(link) {
 
     // ── 1. Heurística rápida (señal de alerta, NO detección) ─────────────
     const esServicioNube = serviciosNube.some(s => hostname.includes(s));
-    const tieneExtension = extensionesRiesgo.some(ext => urlObj.pathname.toLowerCase().endsWith(ext));
+    // 🌟 FIX: Revisar extensión tanto en la URL original como en la final
+    const originalUrlObj = new URL(link);
+    const tieneExtension = extensionesRiesgo.some(ext => 
+        urlObj.pathname.toLowerCase().endsWith(ext) || 
+        originalUrlObj.pathname.toLowerCase().endsWith(ext)
+    );
     // ⚠️ Ya NO marcamos reporte.detectado = true aquí.
     //    La cuarentena solo se activa si alguna API confirma la amenaza.
 
@@ -301,8 +306,10 @@ async function escanearEnlace(link) {
             reporte.motivo    = `IPQualityScore: Score de riesgo ${resIPQSData.risk_score}/100${resIPQSData.phishing ? ' · Phishing confirmado' : ''}${resIPQSData.malware ? ' · Malware confirmado' : ''}`;
             reporte.nivel     = 'ALTO';
         } else if (tieneExtension) {
-            // Extensión ejecutable sin confirmación de APIs: alerta, no detección
-            reporte.motivo = `Extensión de riesgo: \`${urlObj.pathname.split('/').pop()}\` (sin confirmación de APIs)`;
+            // 🌟 FIX: Ejecutables crudos activan cuarentena inmediata
+            reporte.detectado = true;
+            reporte.motivo    = `Archivo Posiblemente Peligroso: Extensión ejecutable \`${originalUrlObj.pathname.split('/').pop()}\` bloqueada preventivamente. Requiere revisión humana.`;
+            reporte.nivel     = 'ALTO'; 
         } else if (esServicioNube) {
             reporte.motivo = 'Servicio de almacenamiento externo (sin confirmación de APIs)';
         }
@@ -346,7 +353,7 @@ async function ejecutarCuarentena(message, reporte) {
 
     await message.channel.send(
         `🛡️ **Cuarentena:** Enlace de ${message.author} bloqueado.\n` +
-        `Motivo: \`${reporte.motivo}\` | Score: **${scoreCompuesto?.score ?? '?'}/100**`
+        `Motivo: \`${reporte.motivo}\` | Score de Riesgo: **${scoreCompuesto?.score ?? '?'}/100**`
     ).catch(() => null);
 
     const row = new ActionRowBuilder().addComponents(
@@ -367,7 +374,9 @@ async function ejecutarCuarentena(message, reporte) {
     const logMsg = await log(message.guild, {
         categoria: 'sistema',
         titulo:    `🚨 Alerta de Seguridad — ${scoreCompuesto?.emoji ?? ''} ${scoreCompuesto?.nivel ?? reporte.nivel}`,
-        descripcion: `Enlace bloqueado automáticamente. Un moderador debe revisar en los próximos **10 minutos**.`,
+        descripcion: `Enlace bloqueado automáticamente. Un moderador debe revisar en los próximos **10 minutos**.`+
+        `\n🔍 **¿Quieres ver el reporte analizado por la IA?** Copia y pega este comando:\n` +
+        `\`\`\`/analizar url:${reporte.cleanUrl}\`\`\``,
         campos: [
             {
                 name:   '⚠️ Score de Riesgo',
