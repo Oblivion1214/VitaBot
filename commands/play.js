@@ -1,4 +1,4 @@
-// commands/play.js — Sistema de Selección de Alta Fidelidad
+// commands/play.js — Sistema de Selección de Alta Fidelidad y Enrutamiento Híbrido
 const { 
     SlashCommandBuilder, 
     MessageFlags, 
@@ -8,7 +8,7 @@ const {
 } = require('discord.js');
 const { useMainPlayer } = require('discord-player');
 const { log, sanitizeErrorMessage } = require('../utils/logger');
-const decirCmd = require('./decir.js'); //
+const decirCmd = require('./decir.js'); 
 
 module.exports = {
     cooldown: 5,
@@ -68,7 +68,6 @@ module.exports = {
 
         // 3. LÓGICA DE MENÚ (Solo si es búsqueda por texto)
         if (!busqueda.startsWith('http')) {
-            // Filtramos tracks sin URL válida para evitar opciones rotas en el menú
             const topTracks = resultado.tracks
                 .filter(t => t.url && t.url.startsWith('http'))
                 .slice(0, 10);
@@ -101,7 +100,7 @@ module.exports = {
             collector.on('collect', async i => {
                 const trackElegida = topTracks.find(t => t.url === i.values[0]);
                 await i.update({ content: `⌛ Procesando: **${trackElegida.title}**...`, components: [] });
-                // Pasamos el track directamente — iniciarReproduccion detecta que es un Track
+                // Pasamos el track directamente
                 return await iniciarReproduccion(trackElegida, interaction, canalVoz, player);
             });
 
@@ -114,75 +113,141 @@ module.exports = {
             return;
         }
 
-        // 4. REPRODUCCIÓN DIRECTA (Si es un link)
+        // 4. REPRODUCCIÓN DIRECTA (Si es un link de YouTube o Spotify)
         return await iniciarReproduccion(resultado, interaction, canalVoz, player);
     },
 };
 
-// FUNCIÓN AUXILIAR REFORZADA Y UNIFICADA
+// ─────────────────────────────────────────────────────────────────
+// EL ENRUTADOR INTELIGENTE (Decide si usar PC o VM Fallback)
+// ─────────────────────────────────────────────────────────────────
 async function iniciarReproduccion(entidadAReproducir, interaction, canalVoz, player) {
     try {
-        // 1. DISPARAR LA REPRODUCCIÓN
-        const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
-            nodeOptions: {
-                metadata: { canal: interaction.channel, guildId: interaction.guildId },
-                leaveOnEmpty: true,
-                leaveOnEmptyCooldown: 5000,
-                leaveOnEnd: true,
-                volume: 40,
-                selfDeaf: true
-            }
-        });
-
-        // 2. DETECCIÓN CORRECTA: distinguir entre Track individual, resultado de búsqueda y playlist
-        // - Si viene del menú de selección o de player.search(), puede ser un objeto Track directamente
-        // - Si viene de un link directo, puede ser { playlist, tracks }
+        // 1. Extraer y empaquetar los datos de lo que vamos a reproducir (Track o Playlist)
         const esPlaylist = !!(entidadAReproducir?.playlist);
-        const esTrackDirecto = typeof entidadAReproducir?.url === 'string'; // objeto Track puro
-
-        let cantidadPistas, nombreAMostrar, autorAMostrar;
+        let tracksParaEnviar = [];
+        let trackTitle = '';
+        let trackAuthor = '';
 
         if (esPlaylist) {
-            cantidadPistas = entidadAReproducir.tracks?.length ?? 1;
-            nombreAMostrar = `la playlist **${entidadAReproducir.playlist.title}**`;
-            autorAMostrar  = entidadAReproducir.playlist.author?.name || 'YouTube';
-        } else {
-            // Track individual (del menú o link directo)
-            cantidadPistas = 1;
-            nombreAMostrar = `**${track.title}**`;
-            autorAMostrar  = track.author;
+            trackTitle = entidadAReproducir.playlist.title;
+            trackAuthor = entidadAReproducir.playlist.author?.name || 'YouTube';
+            tracksParaEnviar = entidadAReproducir.tracks.map(t => ({ 
+                url: t.url, title: t.title, author: t.author, duration: t.duration, thumbnail: t.thumbnail 
+            }));
+        } else if (entidadAReproducir.tracks && entidadAReproducir.tracks.length > 0) {
+            // Resultado de búsqueda o link directo (solo el primero)
+            const t = entidadAReproducir.tracks[0];
+            trackTitle = t.title;
+            trackAuthor = t.author;
+            tracksParaEnviar = [{ url: t.url, title: t.title, author: t.author, duration: t.duration, thumbnail: t.thumbnail }];
+        } else if (entidadAReproducir.url) {
+            // Objeto Track directo (viene del menú de selección)
+            trackTitle = entidadAReproducir.title;
+            trackAuthor = entidadAReproducir.author;
+            tracksParaEnviar = [{ 
+                url: entidadAReproducir.url, title: entidadAReproducir.title, 
+                author: entidadAReproducir.author, duration: entidadAReproducir.duration, 
+                thumbnail: entidadAReproducir.thumbnail 
+            }];
         }
 
-        // 3. AUDITORÍA SANITIZADA
-        await log(interaction.guild, {
-            categoria: 'musica',
-            titulo: esPlaylist ? 'Colección Cargada' : 'Pista Cargada',
-            descripcion: `${nombreAMostrar} ha sido inyectada en los circuitos de Graf Eisen.`,
-            campos: [
-                { name: '🎤 Autor/Canal', value: autorAMostrar, inline: true },
-                { name: '🔢 Cantidad',    value: `${cantidadPistas} pista(s)`, inline: true },
-                { name: '📶 Calidad',     value: `Adaptativa (${Math.round(canalVoz.bitrate / 1000)}kbps)`, inline: true }
-            ],
-            usuario: interaction.user,
-        });
+        const nombreAMostrar = esPlaylist ? `la playlist **${trackTitle}**` : `**${trackTitle}**`;
 
-        // 4. RESPUESTA FINAL AL USUARIO
-        await interaction.editReply(`✅ ${nombreAMostrar} añadida a la cola. ¡Disfruta del audio Hi-Fi!`);
+        // 🌟 2. INTENTO PRINCIPAL: DELEGAR A LA PC LOCAL (Hi-Fi) vía Paquete JSON
+        const payload = {
+            guildId: interaction.guildId,
+            voiceId: canalVoz.id,
+            textChannelId: interaction.channel.id,
+            tracks: tracksParaEnviar
+        };
 
-    } catch (error) {
-        const errorLimpio = sanitizeErrorMessage(error.message);
+        try {
+            // Petición HTTP a la PC local (Máximo 4 segundos de paciencia)
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 4000);
+
+            const respuesta = await fetch(`http://100.127.221.32:3000/api/play`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+
+            if (!respuesta.ok) throw new Error(`Status ${respuesta.status}`);
+
+            // ── ÉXITO EN LA PC: Armamos el panel bonito en la VM ──
+            const primeraCancion = tracksParaEnviar[0];
+            const embed = new EmbedBuilder()
+                .setTitle(esPlaylist ? `💿 Playlist Añadida: ${trackTitle}` : '🎵 Añadido a la Cola')
+                .setDescription(`**[${primeraCancion.title}](${primeraCancion.url})**\nAutor: ${primeraCancion.author}\n${esPlaylist ? `*Y ${tracksParaEnviar.length - 1} pistas más...*` : ''}`)
+                .setFooter({ text: `Motor: 🏠 PC Local (Hi-Fi)` })
+                .setColor('#00C853');
+
+            if (primeraCancion.thumbnail) embed.setThumbnail(primeraCancion.thumbnail);
+
+            await interaction.editReply({ content: '', embeds: [embed] });
+
+            // Auditoría de éxito en la PC
+            await log(interaction.guild, {
+                categoria: 'musica',
+                titulo: esPlaylist ? 'Colección Delegada a PC' : 'Pista Delegada a PC',
+                descripcion: `${nombreAMostrar} procesada por la PC Local.`,
+                campos: [
+                    { name: '🎤 Pistas', value: `${tracksParaEnviar.length}`, inline: true },
+                    { name: '💻 Motor', value: 'Windows (Tailscale)', inline: true }
+                ],
+                usuario: interaction.user,
+            });
+
+            return; // Terminamos aquí, la PC pone la música.
+
+        } catch (errorPing) {
+            // 🌟 3. FALLA LA PC -> MODO VM FALLBACK (Supervivencia a 32-64kbps)
+            console.warn(`[Router] ⚠️ PC no disponible. Activando Fallback. Razón: ${errorPing.message}`);
+            
+            await interaction.editReply({ content: `⚠️ **[Fallback]** El servidor Hi-Fi no responde. Reproduciendo ${nombreAMostrar} desde la VM (Modo de Supervivencia)...`, embeds: [] });
+
+            // Ejecuta el motor original de la VM
+            const { queue, track } = await player.play(canalVoz, entidadAReproducir, {
+                nodeOptions: {
+                    metadata: { canal: interaction.channel, guildId: interaction.guildId },
+                    leaveOnEmpty: true,
+                    leaveOnEmptyCooldown: 5000,
+                    leaveOnEnd: true,
+                    volume: 40,
+                    selfDeaf: true
+                }
+            });
+
+            // Auditoría de Fallback
+            await log(interaction.guild, {
+                categoria: 'sistema',
+                titulo: '⚠️ VM Fallback Activado',
+                descripcion: `Se usó la Máquina Virtual porque la PC no contestó.`,
+                campos: [
+                    { name: '🎵 Pista/Playlist', value: trackTitle, inline: true },
+                    { name: '📶 Calidad', value: `Reducida`, inline: true }
+                ],
+                usuario: interaction.user,
+            });
+        }
+
+    } catch (errorCritico) {
+        const errorLimpio = sanitizeErrorMessage(errorCritico.message);
         console.error('[Error de Audio]:', errorLimpio);
 
         await log(interaction.guild, {
             categoria: 'sistema',
             titulo: 'Fallo de Ingestión',
-            descripcion: 'Graf Eisen no pudo procesar la fuente de audio.',
+            descripcion: 'Graf Eisen no pudo procesar la fuente de audio en ningún motor.',
             error: errorLimpio,
             usuario: interaction.user
         }).catch(() => null);
 
         if (interaction.deferred || interaction.replied) {
-            await interaction.editReply('❌ ¡Graf Eisen ha tenido un fallo técnico! No pude procesar la música.');
+            await interaction.editReply({ content: '❌ ¡Fallo crítico global! Ni la PC ni la VM pudieron reproducir la canción.', embeds: [] });
         }
     }
 }

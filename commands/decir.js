@@ -44,12 +44,13 @@ module.exports = {
         const canalVoz = interaction.member?.voice?.channel;
         const queue = useQueue(interaction.guildId); //
         const member = interaction.member;
+        const botChannel = interaction.guild.members.me?.voice?.channelId;
 
         // 1. BLOQUEO DE SEGURIDAD (Smart Lock): No hablar si hay música
-        // Esto evita el error de FFmpeg -10054 al no haber intercambio de suscriptores.
+        // 1. BLOQUEO DE SEGURIDAD VM: No hablar si hay música en la nube
         if (queue && queue.isPlaying()) {
             return interaction.reply({
-                content: '⚠️ **Sistemas ocupados:** No puedo usar el TTS mientras hay música sonando. Detén la música primero para no interrumpir mis circuitos.',
+                content: '⚠️ **Sistemas ocupados:** No puedo usar el TTS mientras hay música sonando (VM). Detén la música primero.',
                 flags: MessageFlags.Ephemeral
             });
         }
@@ -59,6 +60,21 @@ module.exports = {
                 content: '¡Aprende a usar Graf Eisen! Entra a un canal de voz primero.', 
                 flags: MessageFlags.Ephemeral 
             });
+        }
+
+        if (botChannel) {
+            try {
+                // Le preguntamos a la PC si está ocupada reproduciendo algo
+                const status = await fetch(`http://100.127.221.32:3000/api/control?action=status`).then(r => r.json());
+                if (!status.error) {
+                    return interaction.reply({
+                        content: '⚠️ **Sistemas ocupados:** Graf Eisen está reproduciendo audio en Alta Fidelidad (PC Local). Detén la música primero para no interrumpir mis circuitos.',
+                        flags: MessageFlags.Ephemeral
+                    });
+                }
+            } catch (e) {
+                // Si la PC no responde, asumimos que no está reproduciendo y seguimos
+            }
         }
     
         if (!canalVoz) {
@@ -209,4 +225,5 @@ module.exports = {
             }
         }
     },
+
 };

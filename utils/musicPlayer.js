@@ -233,14 +233,23 @@ function secondsToTime(secs) {
 function limpiarParaLyrics(texto, autor) {
     if (!texto) return '';
     let limpio = texto
-        .replace(/\(Letra Oficial\)/gi,'').replace(/\(Letra\)/gi,'')
-        .replace(/\(Letra Lyrics\)/gi,'').replace(/\(Video Oficial\)/gi,'')
-        .replace(/\(Video\)/gi,'').replace(/\(Official Video\)/gi,'')
-        .replace(/\(Lyrics\)/gi,'').replace(/\(Audio Oficial\)/gi,'')
-        .replace(/\(Lyrics Video\)/gi,'').replace(/\(Cover Audio\)/gi,'')
-        .replace(/\(Official Live Video\)/gi,'').replace(/\(Live Video\)/gi,'')
-        .replace(/\(Official Live\)/gi,'').replace(/\[.*?\]/g,'')
-        .replace(/"/g,'').replace(/\s+/g,' ').trim();
+        .replace(/\(Letra Oficial\)/gi,'')
+        .replace(/\(Letra\)/gi,'')
+        .replace(/\(Letra Lyrics\)/gi,'')
+        .replace(/\(Video Oficial\)/gi,'')
+        .replace(/\(Video\)/gi,'')
+        .replace(/\(Official Video\)/gi,'')
+        .replace(/\(Lyrics\)/gi,'')
+        .replace(/\(Audio Oficial\)/gi,'')
+        .replace(/\(Lyrics Video\)/gi,'')
+        .replace(/\(Cover Audio\)/gi,'')
+        .replace(/\(Official Live Video\)/gi,'')
+        .replace(/\(Live Video\)/gi,'')
+        .replace(/\(Official Live\)/gi,'')
+        .replace(/\[.*?\]/g,'')
+        .replace(/"/g,'')
+        .replace(/\s+/g,' ')
+        .trim();
     if (limpio.includes('-')) {
         const partes = limpio.split('-');
         if (autor && partes[0].toLowerCase().includes(autor.toLowerCase())) limpio = partes[1].trim();
@@ -285,31 +294,66 @@ class YoutubeExtExtractor extends BaseExtractor {
         logSistema('HANDLE_START');
 
         try {
-            // ── 1. SPOTIFY ────────────────────────────────────────────────
-            if (query.includes('spotify.com/track/')) {
-                const trackId = query.match(/track\/([a-zA-Z0-9]+)/)?.[1];
-                if (!trackId) return { playlist: null, tracks: [] };
+            // ── 1. FIX DEFINITIVO: SPOTIFY METADATA SCRAPER ───────────────────────
+            if (query.includes('spotify.com')) {
+                console.log(`[Handle] 🟢 Link de Spotify detectado...`);
                 const t1 = Date.now();
-                const oembedRes = await fetch(`https://open.spotify.com/oembed?url=spotify:track:${trackId}`);
-                if (!oembedRes.ok) throw new Error('Spotify oEmbed falló');
-                const oembed = await oembedRes.json();
-                console.log(`[Spotify] oEmbed en ${Date.now()-t1}ms → "${oembed.title}"`);
-                const results = await youtubeExt.search(oembed.title, { type: 'video', limit: 1 });
-                if (!results?.videos?.length) return { playlist: null, tracks: [] };
-                const video = results.videos[0];
-                const videoUrl = cleanYoutubeUrl(video.url);
-                if (!videoUrl) return { playlist: null, tracks: [] };
-                const track = buildTrack(this.context.player, {
-                    title: oembed.title || video.title, url: videoUrl,
-                    duration: video.duration?.text || '0:00',
-                    thumbnail: oembed.thumbnail_url || video.thumbnails?.[0]?.url || '',
-                    author: video.channel?.name || 'Desconocido', source: 'spotify',
-                }, context, this);
-                console.log(`[Spotify] ✅ "${track.title}" en ${Date.now()-t0}ms`);
-                return { playlist: null, tracks: [track] };
+                try {
+                    // 1. Visitamos la página web de Spotify simulando ser un navegador
+                    const spotRes = await fetch(query, {
+                        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+                    });
+                    if (!spotRes.ok) throw new Error('No se pudo acceder a la página de Spotify');
+                    
+                    const html = await spotRes.text();
+                    
+                    // 2. Extraemos las etiquetas ocultas usando Expresiones Regulares
+                    const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
+                    const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/);
+                    const thumbMatch = html.match(/<meta property="og:image" content="([^"]+)"/);
+
+                    const title = titleMatch ? titleMatch[1] : 'Canción Desconocida';
+                    let author = '';
+                    
+                    // Spotify guarda el artista en la descripción así: "Song · Ado · 2023"
+                    if (descMatch) {
+                        const partes = descMatch[1].split('·');
+                        if (partes.length >= 2) author = partes[1].trim(); 
+                    }
+                    
+                    console.log(`[Spotify] Metadatos extraídos en ${Date.now()-t1}ms → "${title}" por "${author}"`);
+                    
+                    // 3. Buscamos en YouTube usando Nombre + Artista para precisión militar
+                    const searchQuery = `${title} ${author} audio`;
+                    const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 1 });
+                    
+                    if (!results?.videos?.length) throw new Error('No se encontró equivalencia en YouTube');
+                    
+                    const video = results.videos[0];
+                    // Sanitizamos la URL para que sea perfecta
+                    const videoId = video.url.includes('v=') ? new URL(video.url).searchParams.get('v') : video.url.split('/').pop();
+                    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                    
+                    // 4. Construimos la canción con los datos originales de Spotify
+                    const track = buildTrack(this.context.player, {
+                        title: title, 
+                        url: videoUrl,
+                        duration: video.duration?.text || '0:00',
+                        thumbnail: (thumbMatch ? thumbMatch[1] : '') || video.thumbnails?.[0]?.url || '',
+                        author: author || video.channel?.name || 'Spotify', 
+                        source: 'spotify',
+                    }, context, this);
+                    
+                    console.log(`[Spotify] ✅ Equivalencia en YouTube encontrada: "${video.title}" en ${Date.now()-t0}ms`);
+                    return { playlist: null, tracks: [track] };
+
+                } catch (e) {
+                    console.error(`[Spotify] 🔴 Error: ${e.message}`);
+                    return { playlist: null, tracks: [] };
+                }
             }
 
-            // ── 2. PLAYLIST ───────────────────────────────────────────────
+            // ── 2. PLAYLIST DE YOUTUBE ───────────────────────────────────────────────
             if (query.includes('list=')) {
                 console.log('[Handle] 🔍 Playlist detectada...');
                 let playlistData = null;
@@ -365,15 +409,48 @@ class YoutubeExtExtractor extends BaseExtractor {
                 return { playlist: null, tracks: [] };
             }
 
-            // ── 3. LINK DIRECTO ───────────────────────────────────────────
+            // ── 3. FIX: LINK DIRECTO (DOBLE EXTRACCIÓN) ───────────────────────────
             if (query.includes('youtube.com') || query.includes('youtu.be')) {
                 const videoUrl = cleanYoutubeUrl(query);
                 if (!videoUrl) return { playlist: null, tracks: [] };
                 console.log(`[Handle] 🔗 Link directo: ${videoUrl}`);
                 const t1 = Date.now();
-                const info = await youtubeExt.videoInfo(videoUrl, { requestOptions: { headers: { cookie: youtubeCookie } } });
-                console.log(`[Handle] videoInfo en ${Date.now()-t1}ms → "${info?.title || 'N/A'}"`);
-                if (!info?.title) return { playlist: null, tracks: [] };
+                
+                let info = null;
+                
+                // Intento 1: Extractor rápido (youtube-ext)
+                try {
+                    info = await youtubeExt.videoInfo(videoUrl, { requestOptions: { headers: { cookie: youtubeCookie } } });
+                } catch (e) {
+                    console.warn(`[Handle] ⚠️ youtube-ext falló (${e.message}). Activando yt-dlp de rescate...`);
+                }
+
+                // Intento 2: Si el de arriba falló por cambios en YouTube, usamos yt-dlp
+                if (!info || !info.title) {
+                    try {
+                        const output = await youtubedl(videoUrl, { dumpSingleJson: true, noCheckCertificates: true, quiet: true, noWarnings: true });
+                        const json = (typeof output === 'string') ? JSON.parse(output) : output;
+                        
+                        if (!json || !json.title) throw new Error("JSON vacío o sin título");
+
+                        info = {
+                            title: json.title,
+                            duration: { lengthSec: json.duration },
+                            thumbnails: [{ url: json.thumbnail }],
+                            channel: { name: json.uploader },
+                            shortDescription: json.description,
+                            views: { pretty: json.view_count },
+                            isLive: json.is_live
+                        };
+                        console.log(`[Handle] 🛠️ yt-dlp salvó la extracción.`);
+                    } catch (err) {
+                        console.error(`[Handle] 🔴 Fallo total de extracción en ambos motores: ${err.message}`);
+                        return { playlist: null, tracks: [] };
+                    }
+                }
+
+                console.log(`[Handle] videoInfo extraído en ${Date.now()-t1}ms → "${info?.title || 'N/A'}"`);
+                
                 const track = buildTrack(this.context.player, {
                     title: info.title, url: videoUrl,
                     duration: secondsToTime(info.duration?.lengthSec),
@@ -381,11 +458,12 @@ class YoutubeExtExtractor extends BaseExtractor {
                     author: info.channel?.name || 'Desconocido', source: 'youtube',
                     description: info.shortDescription || '', views: info.views?.pretty || 0, live: info.isLive || false,
                 }, context, this);
+                
                 console.log(`[Handle] ✅ "${track.title}" en ${Date.now()-t0}ms | Live: ${track.live}`);
                 return { playlist: null, tracks: [track] };
             }
 
-            // ── 4. BÚSQUEDA ───────────────────────────────────────────────
+            // ── 4. BÚSQUEDA POR TEXTO ───────────────────────────────────────────────
             const searchQuery = query.includes('music') ? query : `${query} music topic`;
             const t1 = Date.now();
             const results = await youtubeExt.search(searchQuery, { type: 'video', limit: 10 });
@@ -452,7 +530,7 @@ class YoutubeExtExtractor extends BaseExtractor {
                 console.log(`[STREAM] 🏠 → PC Local seleccionado | bitrate: ${targetBitrate}kbps`);
                 return await this._streamDesdePC(cleanUrl, targetBitrate, t0);
             } else {
-                const bitrateReducido = Math.min(targetBitrate, 64);
+                const bitrateReducido = Math.min(targetBitrate, 32);
                 console.log(`[STREAM] 🖥  → VM Fallback seleccionado | bitrate reducido: ${bitrateReducido}kbps (original: ${targetBitrate}kbps)`);
                 return await this._streamDesdeVM(cleanUrl, track, bitrateReducido, t0);
             }
@@ -616,26 +694,24 @@ class YoutubeExtExtractor extends BaseExtractor {
             const bufsize  = maxrate * 2;
 
             const ffmpegArgs = [
-                //'-re',                        // <--- AÑADIR ESTA LÍNEA en ambos modos (PC y VM) para simular velocidad de reproducción real y evitar bursts
                 '-reconnect',             '1',
                 '-reconnect_streamed',    '1',
                 '-reconnect_delay_max',   '10',
                 ...(esLive ? ['-reconnect_at_eof', '1'] : []),
-                '-probesize',             '512K',
-                '-analyzeduration',       '512K',
+                '-probesize',             '256K', // Reducido para arrancar más rápido
+                '-analyzeduration',       '256K',
                 '-loglevel',              'warning',
                 '-i',                     audioUrl,
                 '-vn',
                 '-fflags',                '+discardcorrupt',
-                '-max_muxing_queue_size', '512',
-                '-af',                    'dynaudnorm=f=150:g=15:p=0.95',
+                '-max_muxing_queue_size', '256',
+                // ⚠️ SE ELIMINÓ EL FILTRO '-af dynaudnorm...' PORQUE CONSUME MUCHA CPU
                 '-c:a',                   'libopus',
                 '-ar',                    '48000',
                 '-ac',                    '2',
-                '-b:a',                   `${targetBitrate}k`,
-                // CONTROL DE VELOCIDAD — igual que en audioServer
-                //'-maxrate',               `${maxrate}k`,
-                //'-bufsize',               `${bufsize}k`,
+                '-b:a',                   `${targetBitrate}k`, // Aquí inyecta los 32kbps
+                '-vbr',                   'on',
+                '-compression_level',     '5', // 5 es el balance perfecto. 10 consume más CPU.
                 '-f',                     'opus',
                 'pipe:1',
             ];
