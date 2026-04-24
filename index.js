@@ -3,7 +3,7 @@
 require('dotenv').config();
 
 // 2. IMPORTACIONES
-const { Client, Collection, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, Collection, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const express = require('express'); // <-- AÑADIMOS EXPRESS AQUÍ
 const fs = require('fs');
 const Genius = require('genius-lyrics');
