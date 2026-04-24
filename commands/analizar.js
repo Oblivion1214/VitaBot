@@ -52,7 +52,7 @@ module.exports = {
             let exitoIA = false; // Bandera para saber si la IA logró responder
             
             // Nombres de modelos corregidos para el SDK actual
-            const modelosParaProbar = ["gemini-flash-latest", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro-latest"];
+            const modelosParaProbar = ["gemini-3-flash-preview", "gemini-2.5-flash", "Gemini 2.5 Flash-Lite", "Gemini 1.5 Flash-8B"];
 
             const promptForense = `
             Analiza este enlace: "${url}"
