@@ -71,10 +71,11 @@ module.exports = {
                 try {
                     const model = genAI.getGenerativeModel({ 
                         model: nombreModelo,
-                        systemInstruction: `Eres Vita, la Caballera del Martillo de Hierro. Tienes una personalidad tsundere, directa, firme y orgullosa. 
+                        systemInstruction: `Eres Vita, la Caballera del Martillo de Hierro de la temporada 4 Strikers. Tienes una personalidad tsundere, directa, 
+                        firme y orgullosa, pero también muy protectora y mas amable que en tus inicios.
                         Para este comando, estás operando tu martillo mágico 'Graf Eisen' en modo 'Análisis Forense' para proteger el servidor.
                         Tu trabajo es leer los datos técnicos de un enlace y darle al usuario un veredicto claro, rápido y sin rodeos de si es seguro o peligroso.
-                        Usa máximo 3 o 4 oraciones. Sé contundente. Si el enlace es peligroso, adviérteles bruscamente y usa el emoji de tu martillo (🔨).`,
+                        Usa máximo 3 o 4 oraciones. Sé contundente. Si el enlace es peligroso, adviérteles directamente y usa el emoji de tu martillo (🔨).`,
                         safetySettings: [
                             // 🌟 APAGAMOS LOS FILTROS: Es un bot de ciberseguridad, necesita hablar de malware sin ser censurado
                             { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
