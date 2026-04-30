@@ -14,7 +14,7 @@ const googleTTS = require('google-tts-api');
 const { Readable } = require('stream');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
-const { log } = require('../utils/logger'); //
+const { log } = require('../utils/logger'); 
 
 const DELAY_DESCONEXION_MS = 2 * 60 * 1000;
 
@@ -41,35 +41,35 @@ module.exports = {
                 .setMaxLength(200)),
 
     async execute(interaction) {
+        // 🌟 1. DEFERIR INMEDIATAMENTE: Evita el error 10062 (Unknown interaction) por timeouts de red
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
         const canalVoz = interaction.member?.voice?.channel;
-        const queue = useQueue(interaction.guildId); //
+        const queue = useQueue(interaction.guildId); 
         const member = interaction.member;
         const botChannel = interaction.guild.members.me?.voice?.channelId;
 
-        // 1. BLOQUEO DE SEGURIDAD (Smart Lock): No hablar si hay música
-        // 1. BLOQUEO DE SEGURIDAD VM: No hablar si hay música en la nube
+        // 2. BLOQUEO DE SEGURIDAD VM: No hablar si hay música en la nube
         if (queue && queue.isPlaying()) {
-            return interaction.reply({
-                content: '⚠️ **Sistemas ocupados:** No puedo usar el TTS mientras hay música sonando (VM). Detén la música primero.',
-                flags: MessageFlags.Ephemeral
+            return interaction.editReply({
+                content: '⚠️ **Sistemas ocupados:** No puedo usar el TTS mientras hay música sonando (VM). Detén la música primero.'
             });
         }
 
         if (!member?.voice?.channel) {
-            return interaction.reply({ 
-                content: '¡Aprende a usar Graf Eisen! Entra a un canal de voz primero.', 
-                flags: MessageFlags.Ephemeral 
+            return interaction.editReply({ 
+                content: '¡Aprende a usar Graf Eisen! Entra a un canal de voz primero.' 
             });
         }
 
+        // 3. BLOQUEO DE SEGURIDAD PC LOCAL: Chequeo de red a la PC
         if (botChannel) {
             try {
                 // Le preguntamos a la PC si está ocupada reproduciendo algo
                 const status = await fetch(`http://100.127.221.32:3000/api/control?action=status`).then(r => r.json());
                 if (!status.error) {
-                    return interaction.reply({
-                        content: '⚠️ **Sistemas ocupados:** Graf Eisen está reproduciendo audio en Alta Fidelidad (PC Local). Detén la música primero para no interrumpir mis circuitos.',
-                        flags: MessageFlags.Ephemeral
+                    return interaction.editReply({
+                        content: '⚠️ **Sistemas ocupados:** Graf Eisen está reproduciendo audio en Alta Fidelidad (PC Local). Detén la música primero para no interrumpir mis circuitos.'
                     });
                 }
             } catch (e) {
@@ -78,20 +78,17 @@ module.exports = {
         }
     
         if (!canalVoz) {
-            return interaction.reply({ 
-                content: '¡Escucha bien! No puedo hablarle a las paredes. ¡Entra en un canal de voz ahora mismo!', 
-                flags: MessageFlags.Ephemeral 
+            return interaction.editReply({ 
+                content: '¡Escucha bien! No puedo hablarle a las paredes. ¡Entra en un canal de voz ahora mismo!' 
             });
         }
 
         if (enEjecucion.has(interaction.guildId)) {
-            return interaction.reply({ 
-                content: '⏳ Ya estoy procesando un mensaje de voz, espera un momento.', 
-                flags: MessageFlags.Ephemeral 
+            return interaction.editReply({ 
+                content: '⏳ Ya estoy procesando un mensaje de voz, espera un momento.' 
             });
         }
 
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const texto = interaction.options.getString('mensaje');
         enEjecucion.add(interaction.guildId); // Bloqueamos el comando
 
@@ -101,7 +98,7 @@ module.exports = {
         let timeoutDesconexion = null;
 
         try {
-            // 2. Obtención del audio desde Google TTS
+            // 4. Obtención del audio desde Google TTS
             const ttsUrl = googleTTS.getAudioUrl(texto, {
                 lang: 'es',
                 slow: false,
@@ -116,7 +113,7 @@ module.exports = {
             const arrayBuffer = await response.arrayBuffer();
             console.log('[TTS] MP3 recibido:', arrayBuffer.byteLength, 'bytes');
 
-            // 3. Conversión MP3 → OGG/Opus mediante FFmpeg
+            // 5. Conversión MP3 → OGG/Opus mediante FFmpeg
             const oggBuffer = await new Promise((resolve, reject) => {
                 const ff = spawn(ffmpegPath, [
                     '-loglevel', 'error',
@@ -140,7 +137,7 @@ module.exports = {
 
             if (!oggBuffer.byteLength) throw new Error('FFmpeg no generó audio');
 
-            // 4. Gestión de la conexión
+            // 6. Gestión de la conexión
             // Si hay un timeout ocioso (espera de 2 min), lo cancelamos para reusar la conexión
             if (conexionesTTS.has(interaction.guildId)) {
                 const prev = conexionesTTS.get(interaction.guildId);
@@ -158,7 +155,7 @@ module.exports = {
                 await entersState(connection, VoiceConnectionStatus.Ready, 10_000);
             }
 
-            // 5. Reproducción del audio
+            // 7. Reproducción del audio
             ttsPlayer = createAudioPlayer({
                 behaviors: { noSubscriber: NoSubscriberBehavior.Stop }
             });
@@ -177,8 +174,6 @@ module.exports = {
                 setTimeout(resolve, 20_000); // Timeout de seguridad
             });
 
-            // const margen = estimarDuracionMs(oggBuffer);
-            //await new Promise(r => setTimeout(r, margen));
             console.log('[TTS] Reproducción completada.');
 
             // Auditoría
@@ -196,7 +191,7 @@ module.exports = {
             console.error('[TTS Error]:', e.message);
             await interaction.editReply('❌ No pude procesar tu mensaje de voz.');
         } finally {
-            // 6. LIMPIEZA FINAL
+            // 8. LIMPIEZA FINAL
             try { ttsPlayer?.stop(true); } catch (_) {}
             try { subscription?.unsubscribe(); } catch (_) {}
 
@@ -225,5 +220,4 @@ module.exports = {
             }
         }
     },
-
 };
