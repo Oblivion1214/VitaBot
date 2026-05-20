@@ -209,9 +209,18 @@ module.exports = {
                     conexionesTTS.delete(guildId);
                     // Solo destruimos si discord-player no ha tomado el control en este tiempo
                     const queueActual = useQueue(guildId);
+                    
                     if (!queueActual?.connection) {
-                        connRef.destroy();
-                        console.log('[TTS] Bot desconectado tras 2 minutos de inactividad.');
+                        // 🚀 AQUÍ VA EL TRY...CATCH BLINDADO
+                        try {
+                            // Verificamos que la conexión siga viva antes de destruirla
+                            if (connRef && connRef.state && connRef.state.status !== VoiceConnectionStatus.Destroyed) {
+                                connRef.destroy();
+                                console.log('[TTS] Bot desconectado tras 2 minutos de inactividad.');
+                            }
+                        } catch (err) {
+                            console.warn('[TTS] ⚠️ La conexión de voz ya estaba destruida (posible expulsión o guild.leave).');
+                        }
                     }
                 }, DELAY_DESCONEXION_MS);
 
