@@ -205,13 +205,21 @@ function registrarGuildCreate(client) {
             }
         }
 
-        // 4. Timeout de auto-limpieza (10 min)
+        // 4. Timeout de auto-limpieza inteligente (10 min)
         const timeout = setTimeout(async () => {
             if (guild.available && msg) {
-                console.log(`[Rastreo] » | Tiempo agotado en ${guild.name}. Saliendo.`);
-                await msg.edit({ content: '⏰ Tiempo agotado sin respuesta. Vita se retira.', embeds: [], components: [] }).catch(() => null);
-                await new Promise(r => setTimeout(r, 1500));
-                await guild.leave().catch(() => null);
+                // Verificamos si en estos 10 min usaron /config y completaron el setup
+                const configActual = obtenerConfigServidor(guild.id, currentLang, guild.name);
+                
+                if (!configActual._setupCompleto) {
+                    console.log(`[Rastreo] » | Setup nunca se completó en ${guild.name}. Saliendo.`);
+                    await msg.edit({ content: '⏰ Tiempo de configuración agotado. Vita se retira.', embeds: [], components: [] }).catch(() => null);
+                    await new Promise(r => setTimeout(r, 1500));
+                    await guild.leave().catch(() => null);
+                } else {
+                    // Se completó por otra vía (ej. comando /config), solo limpiamos los botones
+                    await msg.edit({ content: '✅ Configuración completada.', embeds: [], components: [] }).catch(() => null);
+                }
             }
         }, 10 * 60 * 1000);
 
