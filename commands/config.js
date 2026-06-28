@@ -48,6 +48,13 @@ module.exports = {
         let config = obtenerConfigServidor(interaction.guild.id, 'es', interaction.guild.name);
         let lang   = config.idioma || 'es';
 
+        // 🚀 EL "KILL SWITCH": Si usan /config, asumimos control activo y desactivamos la bomba.
+        if (!config._setupCompleto) {
+            actualizarConfigServidor(interaction.guild.id, { _setupCompleto: true }, interaction.guild.name);
+            await invalidarPanelSetup(interaction.client, interaction.guild.id).catch(() => null);
+            config._setupCompleto = true; // Sincronizamos la variable local
+        }
+
         // ── Construir select de categorías ───────────────────────────────
         const crearMenuCategorias = (conf, l) => new StringSelectMenuBuilder()
             .setCustomId('cfg_categorias')

@@ -55,45 +55,62 @@ module.exports = {
 
                 await interaction.editReply('⏳ Consultando el estado de la máquina en Google Cloud...');
 
-                // A) Verificar si ya está encendida
                 const [instanciaActual] = await instancesClient.get({
                     project: projectId,
                     zone: zone,
                     instance: instanceName,
                 });
 
-                // Extraemos la IP pública dinámica que le asignó Google Cloud
                 const ipPublica = instanciaActual.networkInterfaces[0].accessConfigs[0].natIP;
 
+                // --- NUEVO FLUJO DE DOBLE VERIFICACIÓN ---
                 if (instanciaActual.status === 'RUNNING') {
-                    return interaction.editReply(`⚠️ **El servidor ya se encuentra encendido.**\n🎮 IP de conexión: \`${ipPublica}\``);
+                    await interaction.editReply('⏳ La máquina virtual está encendida. Verificando el motor de Minecraft...');
+                    
+                    try {
+                        // Intentamos hacer ping al servidor. Si responde, realmente está activo.
+                        await util.status(ipPublica, 25565, { timeout: 3000 });
+                        
+                        return interaction.editReply(`⚠️ **El servidor ya se encuentra encendido y funcionando.**\n🎮 IP de conexión: \`${ipPublica}\``);
+                    } catch (e) {
+                        // Si da error, la VM está encendida pero Java/Forge está apagado
+                        await interaction.editReply('⚠️ **La VM está encendida pero Minecraft está detenido** (posible mantenimiento).\n⏳ Reiniciando la máquina virtual remotamente para levantar los servicios en limpio...');
+                        
+                        // Ejecutamos un reinicio de la VM desde la API de GCP
+                        await instancesClient.reset({
+                            project: projectId,
+                            zone: zone,
+                            instance: instanceName,
+                        });
+                        
+                        // No usamos "return" aquí, dejamos que el código pase directo a la fase 4
+                    }
+                } else {
+                    // Flujo normal: Si está completamente apagada, la encendemos
+                    await interaction.editReply('⏳ Encendiendo la máquina virtual. Espera un momento...');
+                    await instancesClient.start({
+                        project: projectId,
+                        zone: zone,
+                        instance: instanceName,
+                    });
                 }
 
-                // B) Si está apagada, la encendemos
-                await interaction.editReply('⏳ Encendiendo la máquina virtual. Espera un momento...');
-                await instancesClient.start({
-                    project: projectId,
-                    zone: zone,
-                    instance: instanceName,
-                });
-
-                await interaction.editReply(`✅ **¡Máquina Virtual encendida!** (IP: \`${ipPublica}\`)\nEl servidor de Minecraft (Forge) tardará unos minutos en cargar todos los mods. \n\n👀 *VitaBot te etiquetará aquí mismo cuando puedas entrar a jugar.*`);
+                // El mensaje de confirmación previo al ciclo de monitoreo
+                await interaction.editReply(`✅ **¡Iniciando el servidor!** (IP: \`${ipPublica}\`)\nEl servidor de Minecraft (Forge) tardará unos minutos en cargar todos los mods. \n\n👀 *VitaBot te etiquetará aquí mismo cuando puedas entrar a jugar.*`);
 
                 // --- 4. CICLO DE MONITOREO (POLLING) HACIA MINECRAFT ---
                 let serverOnline = false;
                 let intentos = 0;
                 const maxIntentos = 30; // 30 intentos * 10 segundos = 5 minutos de espera máxima
 
-                // Le damos 2 minutos de "gracia" iniciales a Linux para arrancar Java antes de hacer ping
+                // Le damos 2 minutos de "gracia" iniciales a Linux para arrancar Java
                 await new Promise(resolve => setTimeout(resolve, 120000));
 
                 while (!serverOnline && intentos < maxIntentos) {
                     try {
-                        // Hacemos un ping al puerto de Minecraft. Si responde, rompemos el bucle
                         await util.status(ipPublica, 25565, { timeout: 2000 });
                         serverOnline = true;
                     } catch (e) {
-                        // Si falla (Connection Refused), sumamos un intento y esperamos 10 segundos
                         intentos++;
                         await new Promise(resolve => setTimeout(resolve, 10000));
                     }
@@ -103,7 +120,7 @@ module.exports = {
                 if (serverOnline) {
                     await interaction.followUp(`🔔 <@${interaction.user.id}> **¡El servidor de Minecraft ya está abierto y listo para recibir jugadores!**\n🎮 Entren a: \`${ipPublica}\``);
                 } else {
-                    await interaction.followUp(`⚠️ <@${interaction.user.id}> **La máquina virtual se encendió, pero el servidor de Minecraft tardó demasiado en responder.**\nPuede que Forge siga cargando, o que algún mod haya causado un crash. Te sugiero intentar entrar en un par de minutos.`);
+                    await interaction.followUp(`⚠️ <@${interaction.user.id}> **El sistema arrancó, pero el servidor de Minecraft tardó demasiado en responder.**\nPuede que Forge siga cargando, o que algún mod haya causado un crash. Te sugiero intentar entrar en un par de minutos.`);
                 }
 
             } catch (error) {
