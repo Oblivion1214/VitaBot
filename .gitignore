@@ -25,3 +25,6 @@ check.js
 
 # Server de audio local para pruebas, NUNCA subir esto
 audioServer.js
+
+# Servidor de Minecraft local para pruebas, NUNCA subir esto
+servidorminecraft.js
