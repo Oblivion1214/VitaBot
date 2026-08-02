@@ -39,7 +39,10 @@ module.exports = {
             return interaction.editReply('¡Oye! No me lances un testamento, mantén tu mensaje breve si quieres que te responda.');
         }
 
-        const modelosParaProbar = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-1.5-flash-8b"];
+        const modelosParaProbar = [
+        'gemini-2.5-flash-lite',
+        'gemini-2.5-flash',
+        ];
 
         try {
             let respuestaIA = null;
