@@ -40,9 +40,12 @@ module.exports = {
         }
 
         const modelosParaProbar = [
-        'gemini-2.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-3-flash-preview',
         'gemini-2.5-flash',
-        ];
+        'Gemini 2.5 Flash-Lite', // nombre inválido
+        'Gemini 1.5 Flash-8B'    // viejo y ya retirado
+        ]
 
         try {
             let respuestaIA = null;
