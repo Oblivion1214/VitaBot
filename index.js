@@ -1,6 +1,6 @@
 // index.js — VitaBot
 // 1. CARGA DE ENTORNO (siempre lo primero)
-require('dotenv').config();
+require('dotenv').config({ override: true });
 
 // 2. IMPORTACIONES
 const { Client, Collection, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
