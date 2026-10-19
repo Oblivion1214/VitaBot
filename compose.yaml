@@ -1,0 +1,83 @@
+name: vitabot
+
+x-comun: &comun
+  init: true
+  restart: unless-stopped
+  read_only: true
+  user: "1000:1000"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 10s
+  labels:
+    com.centurylinklabs.watchtower.enable: "false"
+  logging:
+    driver: local
+    options:
+      max-size: "2m"
+      max-file: "3"
+
+services:
+  audio:
+    <<: *comun
+    image: vitabot-audio:servidor-v1
+    build:
+      context: .
+      target: audio
+    cpus: 1.0
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 64
+    environment:
+      AUDIO_BIND_HOST: 0.0.0.0
+      AUDIO_PORT: "3001"
+      AUDIO_MAX_STREAMS: "1"
+      AUDIO_MAX_RESOLVERS: "1"
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/cache
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    secrets:
+      - audio_entorno
+      - youtube_cookies
+    healthcheck:
+      test: [CMD, node, docker/comprobar-audio.cjs]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  bot:
+    <<: *comun
+    image: vitabot-bot:servidor-v1
+    build:
+      context: .
+      target: bot
+    cpus: 0.5
+    mem_limit: 256m
+    memswap_limit: 256m
+    pids_limit: 64
+    environment:
+      BOT_ENV: production
+      NODE_OPTIONS: --max-old-space-size=160
+      PC_AUDIO_URL: http://audio:3001
+      MUSIC_MAX_SESSIONS: "1"
+      AUDIT_CONFIG_PATH: /app/estado/audit-config.json
+      SECURITY_STATE_PATH: /app/estado/security-state.json
+      HOME: /tmp
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    secrets:
+      - bot_entorno
+    volumes:
+      - ../estado:/app/estado
+    depends_on:
+      audio:
+        condition: service_healthy
+
+secrets:
+  bot_entorno:
+    file: ../privado/bot.env
+  audio_entorno:
+    file: ../privado/audio.env
+  youtube_cookies:
+    file: ../privado/youtube-cookie.txt

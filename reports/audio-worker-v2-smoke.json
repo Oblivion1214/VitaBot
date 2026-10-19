@@ -1,0 +1,27 @@
+{
+  "authenticatedHealth": true,
+  "unauthorizedStatus": 401,
+  "youtube": {
+    "resolved": true,
+    "ogg": true,
+    "bytes": 16268,
+    "cancelled": true
+  },
+  "tts": {
+    "ogg": true,
+    "bytes": 16896
+  },
+  "relay": {
+    "packets": 82,
+    "transforms": [
+      "ogg/opus demuxer"
+    ],
+    "encodingRequired": false
+  },
+  "after": {
+    "status": "ok",
+    "apiVersion": 2,
+    "activeStreams": 0,
+    "resolving": 0
+  }
+}

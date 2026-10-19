@@ -1,0 +1,16 @@
+{
+  "dotenv": {
+    "current": "17.4.2",
+    "wanted": "17.4.2",
+    "latest": "18.0.8",
+    "dependent": "VitaBot",
+    "location": "C:\\Users\\saulj\\Documents\\VitaBot\\node_modules\\dotenv"
+  },
+  "opusscript": {
+    "current": "0.0.8",
+    "wanted": "0.0.8",
+    "latest": "0.1.1",
+    "dependent": "VitaBot",
+    "location": "C:\\Users\\saulj\\Documents\\VitaBot\\node_modules\\opusscript"
+  }
+}

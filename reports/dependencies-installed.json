@@ -1,0 +1,95 @@
+{
+  "name": "VitaBot",
+  "dependencies": {
+    "@discord-player/extractor": {
+      "version": "7.2.0",
+      "resolved": "https://registry.npmjs.org/@discord-player/extractor/-/extractor-7.2.0.tgz",
+      "overridden": false
+    },
+    "@discordjs/opus": {
+      "version": "0.10.0",
+      "resolved": "https://registry.npmjs.org/@discordjs/opus/-/opus-0.10.0.tgz",
+      "overridden": false
+    },
+    "@discordjs/voice": {
+      "version": "0.19.2",
+      "resolved": "https://registry.npmjs.org/@discordjs/voice/-/voice-0.19.2.tgz",
+      "overridden": false
+    },
+    "@google/generative-ai": {
+      "version": "0.24.1",
+      "resolved": "https://registry.npmjs.org/@google/generative-ai/-/generative-ai-0.24.1.tgz",
+      "overridden": false
+    },
+    "@huggingface/inference": {
+      "version": "4.13.32",
+      "resolved": "https://registry.npmjs.org/@huggingface/inference/-/inference-4.13.32.tgz",
+      "overridden": false
+    },
+    "axios": {
+      "version": "1.20.0",
+      "resolved": "https://registry.npmjs.org/axios/-/axios-1.20.0.tgz",
+      "overridden": false
+    },
+    "discord-player": {
+      "version": "7.2.0",
+      "resolved": "https://registry.npmjs.org/discord-player/-/discord-player-7.2.0.tgz",
+      "overridden": false
+    },
+    "discord.js": {
+      "version": "14.27.0",
+      "resolved": "https://registry.npmjs.org/discord.js/-/discord.js-14.27.0.tgz",
+      "overridden": false
+    },
+    "dotenv": {
+      "version": "17.4.2",
+      "resolved": "https://registry.npmjs.org/dotenv/-/dotenv-17.4.2.tgz",
+      "overridden": false
+    },
+    "express": {
+      "version": "5.3.0",
+      "resolved": "https://registry.npmjs.org/express/-/express-5.3.0.tgz",
+      "overridden": false
+    },
+    "ffmpeg-static": {
+      "version": "5.3.0",
+      "resolved": "https://registry.npmjs.org/ffmpeg-static/-/ffmpeg-static-5.3.0.tgz",
+      "overridden": false
+    },
+    "genius-lyrics": {
+      "version": "4.4.7",
+      "resolved": "https://registry.npmjs.org/genius-lyrics/-/genius-lyrics-4.4.7.tgz",
+      "overridden": false
+    },
+    "google-translate-api-x": {
+      "version": "10.7.3",
+      "resolved": "https://registry.npmjs.org/google-translate-api-x/-/google-translate-api-x-10.7.3.tgz",
+      "overridden": false
+    },
+    "google-tts-api": {
+      "version": "2.0.2",
+      "resolved": "https://registry.npmjs.org/google-tts-api/-/google-tts-api-2.0.2.tgz",
+      "overridden": false
+    },
+    "opusscript": {
+      "version": "0.0.8",
+      "resolved": "https://registry.npmjs.org/opusscript/-/opusscript-0.0.8.tgz",
+      "overridden": false
+    },
+    "os-utils": {
+      "version": "0.0.14",
+      "resolved": "https://registry.npmjs.org/os-utils/-/os-utils-0.0.14.tgz",
+      "overridden": false
+    },
+    "youtube-dl-exec": {
+      "version": "3.1.17",
+      "resolved": "https://registry.npmjs.org/youtube-dl-exec/-/youtube-dl-exec-3.1.17.tgz",
+      "overridden": false
+    },
+    "youtube-ext": {
+      "version": "1.1.25",
+      "resolved": "https://registry.npmjs.org/youtube-ext/-/youtube-ext-1.1.25.tgz",
+      "overridden": false
+    }
+  }
+}

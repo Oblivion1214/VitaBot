@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-18",
+  "implementation": "v2",
+  "roles": {
+    "vm": "Discord, colas por servidor, retransmisión Opus",
+    "pc": "yt-dlp, FFmpeg, música y TTS"
+  },
+  "audit": {
+    "total": 0,
+    "report": "reports/npm-audit-architecture-v2.json"
+  },
+  "tests": {
+    "passed": 47,
+    "failed": 0,
+    "report": "reports/tests-architecture-v2.txt"
+  },
+  "localIntegration": {
+    "host": "PC",
+    "youtube": true,
+    "tts": true,
+    "opusDemux": true,
+    "authorizedHealth": true,
+    "unauthorizedStatus": 401,
+    "leakedJobs": 0,
+    "report": "reports/audio-worker-v2-smoke.json"
+  },
+  "deployment": {
+    "pcWorker": "running on private port 3001",
+    "legacyPcServer": "stopped; recoverable local copy available",
+    "vm": "production online; staging code synchronized and not running",
+    "mainFilesChanged": true,
+    "stageFilesChanged": true,
+    "archiveTransferVerified": true,
+    "discordListeningTest": {
+      "environment": "staging",
+      "music": true,
+      "tts": true,
+      "confirmedByUser": true
+    },
+    "vmResourceMeasurement": {
+      "idleRssMiB": 91.5,
+      "ffmpegProcesses": 0,
+      "ytdlpProcesses": 0,
+      "note": "Idle snapshots after startup; no sustained load benchmark. Heavy processing remains on PC.",
+      "productionIdleRssMiB": 89.2
+    },
+    "archiveSha256": "43452fb1adfe7a866cfd2ab631dd9708cb29d1323c033b0c0c13b67a052d28d2",
+    "vmAutomatedTests": {
+      "passed": 46,
+      "failed": 0
+    },
+    "vmAuditTotal": 0,
+    "vmStreamSmoke": {
+      "youtube": true,
+      "tts": true,
+      "opusDemux": true,
+      "activeStreamsAfter": 0,
+      "resolvingAfter": 0
+    },
+    "vmProductionTests": {
+      "passed": 47,
+      "failed": 0
+    },
+    "vmProductionAuditTotal": 0,
+    "productionStarted": true,
+    "pm2SavedForV2": true,
+    "cutover": "complete",
+    "productionDiscordReady": true,
+    "productionNewErrorBytes": 0,
+    "pm2ProcessNames": [
+      "vitabot"
+    ],
+    "productionWorkerHealth": {
+      "authenticated": true,
+      "unauthorizedStatus": 401,
+      "apiVersion": 2,
+      "activeStreams": 0,
+      "resolving": 0
+    },
+    "sharedAuditConfiguration": true
+  },
+  "rollback": {
+    "localBackup": ".cache/architecture-v1-backup",
+    "previousServiceRetained": false,
+    "remoteBackup": "/home/saul_dlac12/.vitabot-backups/architecture-v2-20261018",
+    "previousPcRuntime": ".cache/legacy-audio",
+    "previousVmDependenciesPreserved": true
+  },
+  "onboardingFix": "reports/guild-setup-fix.json"
+}

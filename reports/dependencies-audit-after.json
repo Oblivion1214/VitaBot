@@ -1,0 +1,96 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "@discord-player/extractor": {
+      "name": "@discord-player/extractor",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "file-type"
+      ],
+      "effects": [
+        "discord-player"
+      ],
+      "range": ">=4.0.0-dev",
+      "nodes": [
+        "node_modules/@discord-player/extractor"
+      ],
+      "fixAvailable": {
+        "name": "@discord-player/extractor",
+        "version": "3.0.3",
+        "isSemVerMajor": true
+      }
+    },
+    "discord-player": {
+      "name": "discord-player",
+      "severity": "moderate",
+      "isDirect": true,
+      "via": [
+        "@discord-player/extractor"
+      ],
+      "effects": [],
+      "range": ">=6.3.0",
+      "nodes": [
+        "node_modules/discord-player"
+      ],
+      "fixAvailable": {
+        "name": "discord-player",
+        "version": "6.2.1",
+        "isSemVerMajor": true
+      }
+    },
+    "file-type": {
+      "name": "file-type",
+      "severity": "moderate",
+      "isDirect": false,
+      "via": [
+        {
+          "source": 1114301,
+          "name": "file-type",
+          "dependency": "file-type",
+          "title": "file-type affected by infinite loop in ASF parser on malformed input with zero-size sub-header",
+          "url": "https://github.com/advisories/GHSA-5v7r-6r5c-r473",
+          "severity": "moderate",
+          "cwe": [
+            "CWE-835"
+          ],
+          "cvss": {
+            "score": 5.3,
+            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+          },
+          "range": ">=13.0.0 <21.3.1"
+        }
+      ],
+      "effects": [
+        "@discord-player/extractor"
+      ],
+      "range": "13.0.0 - 21.3.0",
+      "nodes": [
+        "node_modules/file-type"
+      ],
+      "fixAvailable": {
+        "name": "@discord-player/extractor",
+        "version": "3.0.3",
+        "isSemVerMajor": true
+      }
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 3,
+      "high": 0,
+      "critical": 0,
+      "total": 3
+    },
+    "dependencies": {
+      "prod": 239,
+      "dev": 0,
+      "optional": 128,
+      "peer": 20,
+      "peerOptional": 0,
+      "total": 367
+    }
+  }
+}

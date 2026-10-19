@@ -1,47 +1,26 @@
-const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, MessageFlags } = require('discord.js');
-const { log } = require('../utils/logger');
-
+const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } = require('discord.js');
+const { obtenerContextoRol } = require('../utils/rolesAutoservicio');
+const { almacenSeguridad } = require('../utils/almacenSeguridad');
 module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('roles')
-        .setDescription('Crea un botón interactivo para dar un rol')
-        .addRoleOption(option => 
-            option.setName('rol_a_dar')
-            .setDescription('Selecciona el rol que este botón entregará')
-            .setRequired(true)
-        )
+    data: new SlashCommandBuilder().setName('roles').setDescription('Crea un botón para un rol de autoservicio sin privilegios')
+        .addRoleOption(option => option.setName('rol_a_dar').setDescription('Rol normal que podrá obtener cualquier miembro').setRequired(true))
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles),
-        
     async execute(interaction) {
-        const rolSeleccionado = interaction.options.getRole('rol_a_dar');
-
-        if (rolSeleccionado.position >= interaction.guild.members.me.roles.highest.position) {
-            return interaction.reply({ content: '❌ No puedo dar un rol que sea igual o superior al mío.', flags: MessageFlags.Ephemeral });
+        await interaction.deferReply();
+        if (!interaction.guild) return interaction.editReply('Este comando solo funciona en servidores.');
+        try {
+            const selected = interaction.options.getRole('rol_a_dar');
+            const { role } = await obtenerContextoRol(interaction.guild, selected.id, interaction.user.id);
+            const reply = await interaction.fetchReply();
+            almacenSeguridad.addPanel({ guildId: interaction.guildId, channelId: interaction.channelId, messageId: reply.id,
+                roleId: role.id, creatorId: interaction.user.id });
+            await interaction.editReply({ embeds: [new EmbedBuilder().setTitle('🎭 Menú de roles')
+                .setDescription('Pulsa para obtener o quitarte el rol <@&' + role.id + '>.').setColor('#FF9900')],
+                components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('dar_rol_' + role.id)
+                    .setLabel(('Obtener rol ' + role.name).slice(0, 80)).setStyle(ButtonStyle.Primary))],
+                allowedMentions: { parse: [] } });
+        } catch {
+            await interaction.editReply('No se creó el panel. Necesitas Gestionar roles; el rol debe ser normal, estar debajo de tu jerarquía y de la de Vita.');
         }
-
-        const embed = new EmbedBuilder()
-            .setTitle('🎭 Menú de Roles')
-            .setDescription(`Haz clic en el botón de abajo para obtener el rol <@&${rolSeleccionado.id}> o quitártelo si ya lo tienes.`)
-            .setColor('#FF9900');
-
-        const botonDinámico = new ButtonBuilder()
-            .setCustomId(`dar_rol_${rolSeleccionado.id}`)
-            .setLabel(`Obtener rol ${rolSeleccionado.name}`)
-            .setStyle(ButtonStyle.Primary);
-
-        const fila = new ActionRowBuilder().addComponents(botonDinámico);
-
-        await log(interaction.guild, {
-            categoria: 'moderacion',
-            titulo: 'Menú de roles creado',
-            descripcion: `Se creó un botón de asignación de rol.`,
-            campos: [
-                { name: '🎭 Rol', value: `<@&${rolSeleccionado.id}>`, inline: true },
-                { name: '📌 Canal', value: `<#${interaction.channelId}>`, inline: true },
-            ],
-            usuario: interaction.user,
-        });
-
-        await interaction.reply({ embeds: [embed], components: [fila] });
     },
 };

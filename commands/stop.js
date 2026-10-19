@@ -1,31 +1,11 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
-const { useMainPlayer } = require('discord-player');
-const { log } = require('../utils/logger');
-
+const { obtenerSesionActiva, responderError } = require('../utils/interfazMusica');
 module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('stop')
-        .setDescription('Detiene la música y desconecta al bot del canal'),
-
+    data: new SlashCommandBuilder().setName('stop').setDescription('Detiene el audio y vacía la cola.'),
     async execute(interaction) {
-        const { useMainPlayer } = require('discord-player');
-        const player = useMainPlayer();
-        const queue = player.nodes.get(interaction.guildId);
-        const botChannel = interaction.guild.members.me.voice.channelId;
-
-        if (botChannel && interaction.member.voice.channelId !== botChannel) {
-            return interaction.reply({ content: "⚠️ **Acceso denegado.**", flags: MessageFlags.Ephemeral });
-        }
-
-        if (queue && queue.isPlaying()) {
-            queue.delete();
-            return interaction.reply('🛑 Música detenida. Motor de la VM apagado.');
-        } else if (botChannel) {
-            await fetch(`http://100.127.221.32:3000/api/control?action=stop`).catch(()=>null);
-            return interaction.reply('🛑 Música detenida. Músculo PC desconectado.');
-        } else {
-            return interaction.reply({ content: '❌ No hay música activa.', flags: MessageFlags.Ephemeral });
-        }
-    }
-
+        try {
+            const session = obtenerSesionActiva(interaction);
+            return await interaction.reply({ content: (session.stop(), '⏹️ Sesión terminada y cola vacía.'), flags: MessageFlags.Ephemeral });
+        } catch (error) { return responderError(interaction, error); }
+    },
 };

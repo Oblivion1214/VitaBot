@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-18",
+  "auditBefore": {
+    "info": 0,
+    "low": 1,
+    "moderate": 7,
+    "high": 9,
+    "critical": 1,
+    "total": 18
+  },
+  "auditAfter": {
+    "info": 0,
+    "low": 0,
+    "moderate": 3,
+    "high": 0,
+    "critical": 0,
+    "total": 3
+  },
+  "removedDirectDependencies": [
+    "@discord-player/ffmpeg",
+    "@distube/ytdl-core",
+    "@google-cloud/compute",
+    "discord-player-youtubei",
+    "picocolors",
+    "play-dl",
+    "prism-media",
+    "tweetnacl"
+  ],
+  "remainingPackages": [
+    {
+      "name": "@discord-player/extractor",
+      "severity": "moderate",
+      "fix": {
+        "name": "@discord-player/extractor",
+        "version": "3.0.3",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "name": "discord-player",
+      "severity": "moderate",
+      "fix": {
+        "name": "discord-player",
+        "version": "6.2.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "name": "file-type",
+      "severity": "moderate",
+      "fix": {
+        "name": "@discord-player/extractor",
+        "version": "3.0.3",
+        "isSemVerMajor": true
+      }
+    }
+  ],
+  "validation": {
+    "unitTestsPassed": 24,
+    "javaScriptFilesSyntaxChecked": 41,
+    "commandsLoaded": 21,
+    "ffmpegOpusEncoding": "passed: 5.0065 seconds, stereo Opus at 48 kHz",
+    "tailscaleVmReachable": true,
+    "tailscaleTransport": "DERP relay",
+    "youtubeExtraction": "passed with explicit authorization for existing cookies",
+    "nativeNodeOpus": "unavailable for Node 24; optional, WASM fallback verified",
+    "discordPlayback": "passed: user confirmed audible playback"
+  },
+  "installedVersions": {
+    "discord.js": "14.27.0",
+    "express": "5.3.0",
+    "axios": "1.20.0",
+    "@huggingface/inference": "4.13.32",
+    "youtube-dl-exec": "3.1.17",
+    "tar": "7.5.22",
+    "esbuild": "0.27.2",
+    "file-type": "16.5.4"
+  }
+}

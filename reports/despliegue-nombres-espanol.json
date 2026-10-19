@@ -1,0 +1,34 @@
+{
+  "fechaLocal": "2026-10-18",
+  "zonaHoraria": "America/Mexico_City",
+  "paqueteSha256": "d404b6c6a5c76999c9fa6c81245dd6efc3e324825da45040ef710ddb6c08b418",
+  "archivosActualizadosPorCopia": 68,
+  "archivosRenombradosPorCopia": 45,
+  "copiasActualizadas": ["VitaBot", "Vita-Pruebas/VitaBot"],
+  "respaldoVM": "~/.vitabot-backups/nombres-1792378446226",
+  "pruebas": {
+    "windows": { "total": 125, "aprobadas": 125 },
+    "linuxAntesDelDespliegue": { "total": 125, "aprobadas": 125 },
+    "integridadDeAmbasCopias": true
+  },
+  "produccion": {
+    "proceso": "vitabot",
+    "estadoPM2": "online",
+    "discordReady": true,
+    "comandosCargados": 21,
+    "memoriaObservadaMiB": 92,
+    "bytesNuevosEnLogDeErrores": 0
+  },
+  "audioDesdeVM": {
+    "saludAutenticada": true,
+    "respuestaSinAutenticacion": 401,
+    "youtube": { "resuelto": true, "ogg": true, "bytes": 21173, "cancelacionCorrecta": true },
+    "voz": { "ogg": true, "bytes": 16896 },
+    "retransmision": { "paquetesOpus": 82, "requiereCodificacionEnVM": false },
+    "trabajosActivosAlTerminar": 0,
+    "busquedasActivasAlTerminar": 0,
+    "confirmacionAudibleEnDiscord": "El usuario confirmó que música y voz funcionan"
+  },
+  "aislamientoPruebas": "Inicio con identidad compartida bloqueado; copia de pruebas detenida",
+  "transferenciaTemporal": "Cerrada tras descargar el paquete; sin puerto 3002 en escucha"
+}

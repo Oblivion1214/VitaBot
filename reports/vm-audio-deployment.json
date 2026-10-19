@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-18",
+  "scope": "Audio endpoint configuration; remote package dependencies unchanged",
+  "remoteCopiesUpdated": [
+    "VitaBot",
+    "Vita-Pruebas/VitaBot"
+  ],
+  "backupDirectory": "~/.vitabot-backups",
+  "remoteJavaScriptSyntax": "passed before applying changes",
+  "credentialsAndCookies": "preserved during remote configuration update",
+  "vmToPcHealth": "ok",
+  "pcToVmWebhookServer": "reachable; GET returns expected 404 for POST-only route",
+  "discordGatewayVm": "ready",
+  "discordGatewayPc": "ready",
+  "pm2": {
+    "name": "vitabot",
+    "status": "online",
+    "saved": true
+  },
+  "youtubeTest": {
+    "explicitCookieAuthorization": true,
+    "download": "passed",
+    "encoding": "passed",
+    "codec": "opus",
+    "sampleRate": 48000,
+    "channels": 2,
+    "durationSeconds": 5.0065
+  },
+  "localValidation": {
+    "testsPassed": 24,
+    "syntaxCheckedFiles": 41
+  },
+  "discordAudiblePlayback": "passed: user confirmed the clip is audible in Discord",
+  "vmYouTubeMetadata": "passed",
+  "localAudioServer": "running in background"
+}

@@ -7,6 +7,7 @@ const {
     MessageFlags
 } = require('discord.js');
 const { log, obtenerConfigServidor, actualizarConfigServidor, obtenerCanalLog, registrarMensajeSetup } = require('./logger');
+const { esServidorPermitido } = require('./identidadEjecucion');
 
 // ─────────────────────────────────────────────
 // TRADUCCIONES
@@ -49,6 +50,8 @@ const i18n = {
 // Clave: guildId → collector activo
 // ─────────────────────────────────────────────
 const setupCollectors = new Map();
+// Se reserva antes del primer await; un evento duplicado no crea otro panel ni otro temporizador.
+const setupSessions = new Map();
 
 /**
  * Envía el mensaje de bienvenida/confirmación al canal de logs configurado.
@@ -156,249 +159,311 @@ function generarPanel(lang, guild) {
 // EVENTO: guildCreate
 // ─────────────────────────────────────────────
 function registrarGuildCreate(client) {
+    client.on('guildDelete', guild => {
+        setupSessions.delete(guild.id);
+        setupCollectors.get(guild.id)?.stop('removed');
+    });
     client.on('guildCreate', async (guild) => {
-        console.log(`[Rastreo] » | Vita detectada en: ${guild.name}. Iniciando protocolos.`);
-
-        // 1. ANUNCIO PÚBLICO INDEPENDIENTE (Siempre se manda)
-        // Esto soluciona que el mensaje no llegue si el DM es exitoso.
-        const canalAnuncio = guild.systemChannel || guild.channels.cache.find(c => 
-            c.type === ChannelType.GuildText && 
-            c.permissionsFor(guild.members.me).has(PermissionFlagsBits.SendMessages)
-        );
-
-        if (canalAnuncio) {
-            await canalAnuncio.send({
-                content: `✨ **Vita Graf Eisen ha llegado.**\nHe enviado el panel de configuración al Dueño por DM. Si no responde, cualquier Admin puede usar \`/config\` para activarme.`
-            }).catch(e => console.error(`[Error Rastreo] Anuncio fallido en ${guild.name}: ${e.message}`));
-        }
-
-        // 2. Idioma y Configuración inicial
-        const sugerenciaLang = guild.preferredLocale?.startsWith('es') ? 'es' : 'en';
-        const config = obtenerConfigServidor(guild.id, sugerenciaLang, guild.name);
-        let currentLang = (config.idioma === 'es' || config.idioma === 'en') ? config.idioma : sugerenciaLang;
-
-        let canalLogSeleccionado = null;
-        let msg = null;
-        let envioPorDM = false;
-
-        // 3. Intento de DM al Owner (Panel Privado)
+        if (!esServidorPermitido(guild.id)) return;
+        if (setupSessions.has(guild.id)) return;
+        const session = { confirming: false, cancelling: false };
+        setupSessions.set(guild.id, session);
         try {
-            const owner = await guild.fetchOwner();
-            msg = await owner.send(generarPanel(currentLang, guild));
-            envioPorDM = true;
-            registrarMensajeSetup(guild.id, msg.id, null); // Registrar mensaje para rastreo
-            console.log(`[Rastreo] » | Panel enviado por DM al owner de "${guild.name}".`);
-        } catch {
-            // Fallback si los DMs están cerrados: usar el canal de anuncio para el panel
-            if (canalAnuncio) {
-                const owner = await guild.fetchOwner().catch(() => null);
-                msg = await canalAnuncio.send({
-                    content: `${owner ? `${owner} — ` : ''}⚠️ *No pude enviarte el panel por DM. Responde aquí (solo admins):*`,
-                    ...generarPanel(currentLang, guild)
-                });
-                // FIX: era canalPublico.id (ReferenceError) → canalAnuncio.id
-                registrarMensajeSetup(guild.id, msg.id, canalAnuncio.id);
-                console.log(`[Rastreo] » | DM bloqueado. Usando canal público para setup en "${guild.name}".`);
-            } else {
-                console.error(`[Rastreo] » | CRÍTICO: Sin canal ni DM para configurar en "${guild.name}".`);
+            if (obtenerConfigServidor(guild.id, 'es', guild.name)._setupCompleto) {
+                setupSessions.delete(guild.id);
                 return;
             }
-        }
+            console.log(`[Rastreo] » | Vita detectada en: ${guild.name}. Iniciando protocolos.`);
 
-        // 4. Timeout de auto-limpieza inteligente (10 min)
-        const timeout = setTimeout(async () => {
-            if (guild.available && msg) {
-                // Verificamos si en estos 10 min usaron /config y completaron el setup
-                const configActual = obtenerConfigServidor(guild.id, currentLang, guild.name);
-                
-                if (!configActual._setupCompleto) {
-                    console.log(`[Rastreo] » | Setup nunca se completó en ${guild.name}. Saliendo.`);
-                    await msg.edit({ content: '⏰ Tiempo de configuración agotado. Vita se retira.', embeds: [], components: [] }).catch(() => null);
-                    await new Promise(r => setTimeout(r, 1500));
-                    await guild.leave().catch(() => null);
+            // 1. ANUNCIO PÚBLICO INDEPENDIENTE (Siempre se manda)
+            // Esto soluciona que el mensaje no llegue si el DM es exitoso.
+            const puedeEnviarPanel = c => c?.type === ChannelType.GuildText && c.permissionsFor(guild.members.me)?.has([
+                PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks
+            ]);
+            const canalAnuncio = (puedeEnviarPanel(guild.systemChannel) ? guild.systemChannel : null) || guild.channels.cache.find(c => 
+                c.type === ChannelType.GuildText && 
+                puedeEnviarPanel(c)
+            );
+
+            if (canalAnuncio) {
+                await canalAnuncio.send({
+                    content: `✨ **Vita Graf Eisen ha llegado.**\nHe enviado el panel de configuración al Dueño por DM. Si no responde, cualquier Admin puede usar \`/config\` para activarme.`
+                }).catch(e => console.error(`[Error Rastreo] Anuncio fallido en ${guild.name}: ${e.message}`));
+            }
+
+            // 2. Idioma y Configuración inicial
+            const sugerenciaLang = guild.preferredLocale?.startsWith('es') ? 'es' : 'en';
+            const config = obtenerConfigServidor(guild.id, sugerenciaLang, guild.name);
+            let currentLang = (config.idioma === 'es' || config.idioma === 'en') ? config.idioma : sugerenciaLang;
+
+            let canalLogSeleccionado = null;
+            let msg = null;
+            let envioPorDM = false;
+
+            // 3. Intento de DM al Owner (Panel Privado)
+            try {
+                const owner = await guild.fetchOwner();
+                msg = await owner.send(generarPanel(currentLang, guild));
+                envioPorDM = true;
+                registrarMensajeSetup(guild.id, msg.id, null); // Registrar mensaje para rastreo
+                console.log(`[Rastreo] » | Panel enviado por DM al owner de "${guild.name}".`);
+            } catch {
+                // Fallback si los DMs están cerrados: usar el canal de anuncio para el panel
+                if (canalAnuncio) {
+                    const owner = await guild.fetchOwner().catch(() => null);
+                    msg = await canalAnuncio.send({
+                        content: `${owner ? `${owner} — ` : ''}⚠️ *No pude enviarte el panel por DM. Responde aquí (solo admins):*`,
+                        ...generarPanel(currentLang, guild)
+                    });
+                    // FIX: era canalPublico.id (ReferenceError) → canalAnuncio.id
+                    registrarMensajeSetup(guild.id, msg.id, canalAnuncio.id);
+                    console.log(`[Rastreo] » | DM bloqueado. Usando canal público para setup en "${guild.name}".`);
                 } else {
-                    // Se completó por otra vía (ej. comando /config), solo limpiamos los botones
-                    await msg.edit({ content: '✅ Configuración completada.', embeds: [], components: [] }).catch(() => null);
+                    console.error(`[Rastreo] » | CRÍTICO: Sin canal ni DM para configurar en "${guild.name}".`);
+                    setupSessions.delete(guild.id);
+                    return;
                 }
             }
-        }, 10 * 60 * 1000);
 
-        // 5. Collector de interacciones
-        const collector = msg.createMessageComponentCollector({
-            filter: async (i) => {
-                if (envioPorDM) return true;
-                const esAdmin = i.member?.permissions.has(PermissionFlagsBits.Administrator);
-                if (!esAdmin) {
-                    await i.reply({
-                        content: currentLang === 'es' ? '⛔ Solo los administradores pueden configurar a Vita.' : '⛔ Only administrators can configure Vita.',
-                        flags: MessageFlags.Ephemeral
-                    }).catch(() => null);
-                    return false;
-                }
-                return true;
-            },
-            time: 10 * 60 * 1000
-        });
-
-        // Registrar el collector activo para que index.js no interfiera.
-        // Se indexa por DOS claves:
-        //   - guild.id: para interacciones desde canal público (guildId disponible)
-        //   - msg.id:   para interacciones desde DM (guildId es null, solo messageId está disponible)
-        setupCollectors.set(guild.id, collector);
-        setupCollectors.set(msg.id, collector);
-
-        collector.on('collect', async (interaction) => {
-            try {
-                // ── Selección de canal de logs (Validación Persistente) ──
-                if (interaction.customId === 'setup_canal_log') {
-                    canalLogSeleccionado = interaction.values[0];
-                    const t = i18n[currentLang];
-                    
-                    let tienePermisos = true;
-                    let avisoEstado = currentLang === 'es' 
-                        ? 'Analizando permisos del canal...' 
-                        : 'Analyzing channel permissions...';
-
-                    // 1. Verificación de permisos si no es el modo "Crear Propio"
-                    if (canalLogSeleccionado !== 'CREATE_OWN') {
-                        const canalObj = guild.channels.cache.get(canalLogSeleccionado);
-                        const permisos = canalObj?.permissionsFor(guild.members.me);
+            // 4. Timeout de auto-limpieza inteligente (10 min)
+            const timeout = setTimeout(async () => {
+                try {
+                    if (setupSessions.get(guild.id) !== session || session.confirming || session.cancelling) return;
+                    if (guild.available && msg) {
+                        // Verificamos si en estos 10 min usaron /config y completaron el setup
+                        const configActual = obtenerConfigServidor(guild.id, currentLang, guild.name);
                         
-                        // Comprobamos permisos críticos: Ver, Hablar y Enlaces
-                        tienePermisos = permisos?.has([
-                            PermissionFlagsBits.ViewChannel,
-                            PermissionFlagsBits.SendMessages,
-                            PermissionFlagsBits.EmbedLinks
-                        ]);
-
-                        const esPrivado = !canalObj?.permissionsFor(guild.roles.everyone).has(PermissionFlagsBits.ViewChannel);
-                        
-                        if (esPrivado && !tienePermisos) {
-                            avisoEstado = currentLang === 'es'
-                                ? `\n\n🔒 **Error de Acceso:** Añade mi rol en Ajustes del Canal > Permisos > Añadir miembros o roles > Rol **Vita-Bot** y Miembro **Vita-Bot** para continuar.`
-                                : `\n\n🔒 **Access Error:** The channel is private and I dont have permission. Please add my role in Channel Settings > Permissions > Add members or roles > **Vita-Bot** role and **Vita-Bot** member to continue.`;
-                        } else if (esPrivado && tienePermisos) {
-                            avisoEstado = currentLang === 'es'
-                                ? `\n\n✅ **Canal Privado:** Permisos verificados.`
-                                : `\n\n✅ **Private Channel:** Permissions verified.`;
+                        if (!configActual._setupCompleto) {
+                            await msg.edit({ content: '⏰ Tiempo de configuración agotado. Vita se retira.', embeds: [], components: [] }).catch(() => null);
+                            await new Promise(r => setTimeout(r, 1500));
+                            // Una confirmación puede llegar mientras Discord edita el panel o durante el aviso.
+                            // Comprobar otra vez justo antes de emitir la solicitud de salida.
+                            if (setupSessions.get(guild.id) === session && !session.confirming && !session.cancelling &&
+                                client.guilds.cache.has(guild.id) && !obtenerConfigServidor(guild.id, currentLang, guild.name)._setupCompleto) {
+                                console.log(`[Rastreo] » | Setup nunca se completó en ${guild.name}. Saliendo.`);
+                                await guild.leave().catch(() => null);
+                            }
                         } else {
-                            avisoEstado = ''; // Limpiamos si es público y todo está bien
+                            // Se completó por otra vía (ej. comando /config), solo limpiamos los botones
+                            await msg.edit({ content: '✅ Configuración completada.', embeds: [], components: [] }).catch(() => null);
                         }
                     }
+                } catch (error) {
+                    // Si el estado no puede leerse, conservar la pertenencia al servidor.
+                    console.error('[guildSetup] No se pudo verificar la configuración; no se abandona el servidor:', error.message);
+                } finally {
+                    if (setupSessions.get(guild.id) === session && !session.confirming && !session.cancelling) setupSessions.delete(guild.id);
+                }
+            }, 10 * 60 * 1000);
+            session.timeout = timeout;
+            timeout.unref?.();
 
-                    // 2. Generar panel base y filtrar componentes según permisos
-                    const panelBase = generarPanel(currentLang, guild);
+            // 5. Collector de interacciones
+            const collector = msg.createMessageComponentCollector({
+                filter: async (i) => {
+                    if (envioPorDM) return true;
+                    const esAdmin = i.member?.permissions.has(PermissionFlagsBits.Administrator);
+                    if (!esAdmin) {
+                        await i.reply({
+                            content: currentLang === 'es' ? '⛔ Solo los administradores pueden configurar a Vita.' : '⛔ Only administrators can configure Vita.',
+                            flags: MessageFlags.Ephemeral
+                        }).catch(() => null);
+                        return false;
+                    }
+                    return true;
+                },
+                time: 10 * 60 * 1000
+            });
 
-                    // Si NO tiene permisos, reconstruimos la fila de botones SIN el botón confirmar.
-                    // No mutamos .components directamente (es la estructura interna de ActionRowBuilder
-                    // en discord.js v14 y no es un array mutable de esa forma).
-                    if (!tienePermisos) {
-                        const botonesOriginales = panelBase.components[1].components;
-                        const botonesFiltrados = botonesOriginales.filter(
-                            btn => !btn.data?.custom_id?.startsWith('confirm_setup')
-                        );
-                        panelBase.components[1] = new ActionRowBuilder().addComponents(botonesFiltrados);
+            // Registrar el collector activo para que index.js no interfiera.
+            // Se indexa por DOS claves:
+            //   - guild.id: para interacciones desde canal público (guildId disponible)
+            //   - msg.id:   para interacciones desde DM (guildId es null, solo messageId está disponible)
+            setupCollectors.set(guild.id, collector);
+            setupCollectors.set(msg.id, collector);
+
+            collector.on('collect', async (interaction) => {
+                let confirmingAttempt = false;
+                try {
+                    if (setupSessions.get(guild.id) !== session || session.confirming || session.cancelling) {
+                        await interaction.reply({ content: 'Este panel ya terminó o está procesando una confirmación. Usa `/config` si necesitas cambiar ajustes.', flags: MessageFlags.Ephemeral }).catch(() => null);
+                        return;
+                    }
+                    // ── Selección de canal de logs (Validación Persistente) ──
+                    if (interaction.customId === 'setup_canal_log') {
+                        canalLogSeleccionado = interaction.values[0];
+                        const t = i18n[currentLang];
+                        
+                        let tienePermisos = true;
+                        let avisoEstado = currentLang === 'es' 
+                            ? 'Analizando permisos del canal...' 
+                            : 'Analyzing channel permissions...';
+
+                        // 1. Verificación de permisos si no es el modo "Crear Propio"
+                        if (canalLogSeleccionado !== 'CREATE_OWN') {
+                            const canalObj = guild.channels.cache.get(canalLogSeleccionado);
+                            const permisos = canalObj?.permissionsFor(guild.members.me);
+                            
+                            // Comprobamos permisos críticos: Ver, Hablar y Enlaces
+                            tienePermisos = permisos?.has([
+                                PermissionFlagsBits.ViewChannel,
+                                PermissionFlagsBits.SendMessages,
+                                PermissionFlagsBits.EmbedLinks
+                            ]);
+
+                            const esPrivado = !canalObj?.permissionsFor(guild.roles.everyone).has(PermissionFlagsBits.ViewChannel);
+                            
+                            if (esPrivado && !tienePermisos) {
+                                avisoEstado = currentLang === 'es'
+                                    ? `\n\n🔒 **Error de Acceso:** Añade mi rol en Ajustes del Canal > Permisos > Añadir miembros o roles > Rol **Vita-Bot** y Miembro **Vita-Bot** para continuar.`
+                                    : `\n\n🔒 **Access Error:** The channel is private and I dont have permission. Please add my role in Channel Settings > Permissions > Add members or roles > **Vita-Bot** role and **Vita-Bot** member to continue.`;
+                            } else if (esPrivado && tienePermisos) {
+                                avisoEstado = currentLang === 'es'
+                                    ? `\n\n✅ **Canal Privado:** Permisos verificados.`
+                                    : `\n\n✅ **Private Channel:** Permissions verified.`;
+                            } else {
+                                avisoEstado = ''; // Limpiamos si es público y todo está bien
+                            }
+                        }
+
+                        // 2. Generar panel base y filtrar componentes según permisos
+                        const panelBase = generarPanel(currentLang, guild);
+
+                        // Si NO tiene permisos, reconstruimos la fila de botones SIN el botón confirmar.
+                        // No mutamos .components directamente (es la estructura interna de ActionRowBuilder
+                        // en discord.js v14 y no es un array mutable de esa forma).
+                        if (!tienePermisos) {
+                            const botonesOriginales = panelBase.components[1].components;
+                            const botonesFiltrados = botonesOriginales.filter(
+                                btn => !btn.data?.custom_id?.startsWith('confirm_setup')
+                            );
+                            panelBase.components[1] = new ActionRowBuilder().addComponents(botonesFiltrados);
+                        }
+
+                        const nombreDisplay = canalLogSeleccionado === 'CREATE_OWN' ? t.own_channel : `<#${canalLogSeleccionado}>`;
+                        
+                        // 3. ACTUALIZACIÓN PERSISTENTE (interaction.update)
+                        // No usamos flags: MessageFlags.Ephemeral para que el owner vea el progreso
+                        await interaction.update({
+                            content: tienePermisos 
+                                ? `✅ **Canal seleccionado:** ${nombreDisplay}. Presiona **"${t.setup_button}"** para finalizar.` 
+                                : `⚠️ **Configuración Bloqueada:** ${avisoEstado}`,
+                            embeds: panelBase.embeds,
+                            components: panelBase.components
+                        });
+                        return;
                     }
 
-                    const nombreDisplay = canalLogSeleccionado === 'CREATE_OWN' ? t.own_channel : `<#${canalLogSeleccionado}>`;
-                    
-                    // 3. ACTUALIZACIÓN PERSISTENTE (interaction.update)
-                    // No usamos flags: MessageFlags.Ephemeral para que el owner vea el progreso
-                    await interaction.update({
-                        content: tienePermisos 
-                            ? `✅ **Canal seleccionado:** ${nombreDisplay}. Presiona **"${t.setup_button}"** para finalizar.` 
-                            : `⚠️ **Configuración Bloqueada:** ${avisoEstado}`,
-                        embeds: panelBase.embeds,
-                        components: panelBase.components
-                    });
-                    return;
-                }
+                    // ── Confirmar setup (Finalización y Auditoría) ──
+                    if (interaction.customId.startsWith('confirm_setup')) {
+                        session.confirming = true;
+                        confirmingAttempt = true;
+                        clearTimeout(timeout);
+                        // Reconocer primero; crear un canal puede tardar más que los tres segundos de Discord.
+                        await interaction.deferUpdate();
 
-                // ── Confirmar setup (Finalización y Auditoría) ──
-                if (interaction.customId.startsWith('confirm_setup')) {
-                    console.log(`[guildSetup] Configuración confirmada en "${guild.name}" por ${interaction.user.tag}.`);
+                        // Resolver el canal ANTES de responder a la interacción
+                        let canalLog = null;
+                        if (canalLogSeleccionado && canalLogSeleccionado !== 'CREATE_OWN') {
+                            canalLog = guild.channels.cache.get(canalLogSeleccionado);
+                            actualizarConfigServidor(guild.id, {
+                                _setupCompleto: true,
+                                canalLogId:    canalLogSeleccionado,
+                                canalLogMode:  'custom'
+                            }, guild.name);
+                        } else {
+                            canalLog = await obtenerCanalLog(guild);
+                            actualizarConfigServidor(guild.id, {
+                                _setupCompleto: true,
+                                canalLogId:    canalLog?.id ?? null,
+                                canalLogMode:  'auto'
+                            }, guild.name);
+                        }
+
+                        // ⚠️ ORDEN CRÍTICO: update() PRIMERO, stop() DESPUÉS.
+                        // collector.stop() dispara on('end') sincrónicamente, lo que elimina
+                        // el collector del Map y puede interferir con la respuesta pendiente.
+                        console.log(`[guildSetup] Configuración confirmada y guardada en "${guild.name}".`);
+                        await interaction.editReply({
+                            content: canalLog ? `✅ **Sincronización Completada.** Los logs se enviarán a <#${canalLog.id}>.` : '✅ Unión confirmada. Falta configurar un canal de auditoría accesible; usa `/config`.',
+                            embeds: [],
+                            components: []
+                        });
+
+                        // Ahora sí detenemos el collector — la interacción ya fue respondida
+                        collector.stop('confirmed');
+
+                        // Enviar mensaje de bienvenida al canal de logs configurado
+                        if (canalLog) {
+                            await enviarMensajeBienvenidaLog(canalLog, guild, interaction.user);
+                        }
+                        return;
+                    }
+
+                    // ── Cambiar idioma (Actualización de Panel) ──
+                    if (interaction.customId.startsWith('change_lang')) {
+                        currentLang = interaction.customId.split('_')[2];
+                        actualizarConfigServidor(guild.id, { idioma: currentLang }, guild.name);
+                        await interaction.update(generarPanel(currentLang, guild));
+                        return;
+                    }
+
+                    // ── Abandonar (Cierre de proceso) ──
+                    if (interaction.customId.startsWith('cancel_setup')) {
+                        if (obtenerConfigServidor(guild.id, currentLang, guild.name)._setupCompleto) {
+                            await interaction.reply({ content: 'La unión ya fue confirmada. Este panel anterior no puede retirar al bot.', flags: MessageFlags.Ephemeral });
+                            return;
+                        }
+                        session.cancelling = true;
+                        clearTimeout(timeout);
+
+                        // ⚠️ ORDEN CRÍTICO: update() PRIMERO, stop() DESPUÉS.
+                        await interaction.update({
+                            content: '👋 Operación cancelada. Vita se retira del servidor.',
+                            embeds: [],
+                            components: []
+                        });
+
+                        // Delay para que Discord procese el mensaje antes de que el bot salga
+                        await new Promise(r => setTimeout(r, 1500));
+                        if (setupSessions.get(guild.id) === session && client.guilds.cache.has(guild.id) &&
+                            !obtenerConfigServidor(guild.id, currentLang, guild.name)._setupCompleto) await guild.leave().catch(() => null);
+                        collector.stop('cancelled');
+                    }
+
+                } catch (e) {
+                    console.error(`[guildSetup] Error crítico en collector:`, e.message);
+                    const content = 'No pude completar y guardar la configuración. Usa `/config` para volver a intentarlo.';
+                    if (interaction.deferred || interaction.replied) await interaction.editReply({ content, embeds: [], components: [] }).catch(() => null);
+                    else await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => null);
+                    if (confirmingAttempt || session.cancelling) collector.stop('error');
+                } finally {
+                    if (confirmingAttempt) session.confirming = false;
+                    if (collector.ended && setupSessions.get(guild.id) === session) setupSessions.delete(guild.id);
+                }
+            });
+
+            collector.on('end', async (_, reason) => {
+                // Limpiar AMBAS entradas del Map al terminar
+                if (setupCollectors.get(guild.id) === collector) setupCollectors.delete(guild.id);
+                if (setupCollectors.get(msg.id) === collector) setupCollectors.delete(msg.id);
+                if (reason !== 'time') {
                     clearTimeout(timeout);
+                    if (setupSessions.get(guild.id) === session) setupSessions.delete(guild.id);
+                }
 
-                    // Resolver el canal ANTES de responder a la interacción
-                    let canalLog = null;
-                    if (canalLogSeleccionado && canalLogSeleccionado !== 'CREATE_OWN') {
-                        canalLog = guild.channels.cache.get(canalLogSeleccionado);
-                        actualizarConfigServidor(guild.id, {
-                            _setupCompleto: true,
-                            canalLogId:    canalLogSeleccionado,
-                            canalLogMode:  'custom'
-                        }, guild.name);
-                    } else {
-                        canalLog = await obtenerCanalLog(guild);
-                        actualizarConfigServidor(guild.id, {
-                            _setupCompleto: true,
-                            canalLogId:    canalLog?.id ?? null,
-                            canalLogMode:  'auto'
-                        }, guild.name);
+                if (reason !== 'confirmed' && reason !== 'cancelled') {
+                    console.log(`» | Collector cerrado (${reason}) en ${guild.name}.`);
+                    if (msg) {
+                        await msg.edit({ components: [] }).catch(() => null);
                     }
-
-                    // ⚠️ ORDEN CRÍTICO: update() PRIMERO, stop() DESPUÉS.
-                    // collector.stop() dispara on('end') sincrónicamente, lo que elimina
-                    // el collector del Map y puede interferir con la respuesta pendiente.
-                    await interaction.update({
-                        content: `✅ **Sincronización Completada.** Los logs se enviarán a ${canalLog ? `<#${canalLog.id}>` : '`#vitabot-logs`'}.`,
-                        embeds: [],
-                        components: []
-                    });
-
-                    // Ahora sí detenemos el collector — la interacción ya fue respondida
-                    collector.stop('confirmed');
-
-                    // Enviar mensaje de bienvenida al canal de logs configurado
-                    if (canalLog) {
-                        await enviarMensajeBienvenidaLog(canalLog, guild, interaction.user);
-                    }
-                    return;
                 }
-
-                // ── Cambiar idioma (Actualización de Panel) ──
-                if (interaction.customId.startsWith('change_lang')) {
-                    currentLang = interaction.customId.split('_')[2];
-                    actualizarConfigServidor(guild.id, { idioma: currentLang }, guild.name);
-                    await interaction.update(generarPanel(currentLang, guild));
-                    return;
-                }
-
-                // ── Abandonar (Cierre de proceso) ──
-                if (interaction.customId.startsWith('cancel_setup')) {
-                    clearTimeout(timeout);
-
-                    // ⚠️ ORDEN CRÍTICO: update() PRIMERO, stop() DESPUÉS.
-                    await interaction.update({
-                        content: '👋 Operación cancelada. Vita se retira del servidor.',
-                        embeds: [],
-                        components: []
-                    });
-
-                    collector.stop('cancelled');
-
-                    // Delay para que Discord procese el mensaje antes de que el bot salga
-                    await new Promise(r => setTimeout(r, 1500));
-                    await guild.leave().catch(() => null);
-                }
-
-            } catch (e) {
-                console.error(`[guildSetup] Error crítico en collector:`, e.message);
-            }
-        });
-
-        collector.on('end', async (_, reason) => {
-            // Limpiar AMBAS entradas del Map al terminar
-            setupCollectors.delete(guild.id);
-            setupCollectors.delete(msg.id);
-
-            if (reason !== 'confirmed' && reason !== 'cancelled') {
-                console.log(`» | Collector cerrado (${reason}) en ${guild.name}.`);
-                if (msg) {
-                    await msg.edit({ components: [] }).catch(() => null);
-                }
-            }
-        });
+            });
+        } catch (error) {
+            clearTimeout(session.timeout);
+            if (setupSessions.get(guild.id) === session) setupSessions.delete(guild.id);
+            console.error('[guildSetup] No se pudo iniciar el protocolo:', error.message);
+        }
     });
 }
 
@@ -409,6 +474,7 @@ async function reconciliarServidores(client) {
     console.log(`» | Reconciliando ${client.guilds.cache.size} servidor(es)...`);
 
     for (const guild of client.guilds.cache.values()) {
+        if (!esServidorPermitido(guild.id)) continue;
         const config = obtenerConfigServidor(guild.id, 'es', guild.name);
         if (config._setupCompleto) continue;
 
