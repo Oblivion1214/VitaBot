@@ -1,5 +1,6 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, escapeMarkdown } = require('discord.js');
 const { ErrorAudio, formatearDuracion } = require('../audio/protocolo');
+const { log } = require('./logger');
 
 function obtenerCanalVoz(interaction) {
     const channel = interaction.member?.voice?.channel;
@@ -66,7 +67,17 @@ async function mostrarLetra(interaction, track) {
         .setDescription((text || 'Letra no disponible.').slice(0, 4096)).setColor('#C62828').setFooter({ text: 'Genius' })], allowedMentions: { parse: [] } });
 }
 function vincularInterfazMusica(service) {
+    // La auditoría usa la configuración del servidor y no bloquea el audio ni los paneles.
+    function registrarEvento(session, titulo, descripcion, campos = []) {
+        Promise.resolve().then(() => log(session.channel.guild, {
+            categoria: 'musica', titulo, descripcion,
+            campos: [{ name: 'Canal de voz', value: `<#${session.channel.id}>`, inline: true }, ...campos],
+        })).catch(() => console.warn('[Auditoría de audio] No se pudo registrar el evento.'));
+    }
     service.on('trackStart', (session, owner) => {
+        registrarEvento(session, 'Reproducción iniciada', 'Vita comenzó a reproducir una canción.', [
+            { name: 'Canción', value: escapeMarkdown(owner.track.title).slice(0, 220) || 'Sin título' },
+        ]);
         // Serialize panel updates so an old song cannot overwrite a newer panel after a slow REST request.
         session.panelTask = (session.panelTask || Promise.resolve()).catch(() => {}).then(async () => {
             await session.panel?.edit({ components: [] }).catch(() => null);
@@ -76,7 +87,19 @@ function vincularInterfazMusica(service) {
             if (session.current !== owner || session.closed) await panel.edit({ components: [] }).catch(() => null);
         }).catch(() => {});
     });
-    service.on('sessionStop', session => { session.panel?.edit({ components: [] }).catch(() => null); });
-    service.on('trackError', (session, error) => { session.textChannel.send({ content: error.message, allowedMentions: { parse: [] } }).catch(() => null); });
+    service.on('sessionStop', session => {
+        registrarEvento(session, 'Sesión de audio terminada', 'Vita cerró la sesión de voz y vació la cola.');
+        session.panel?.edit({ components: [] }).catch(() => null);
+    });
+    service.on('trackError', (session, error) => {
+        registrarEvento(session, 'Error de reproducción', 'No se pudo iniciar o continuar la canción.');
+        session.textChannel.send({ content: error.message, allowedMentions: { parse: [] } }).catch(() => null);
+    });
+    service.on('speechStart', session => {
+        registrarEvento(session, 'Mensaje de voz iniciado', 'Vita comenzó a reproducir un mensaje de /decir. El contenido no se registra.');
+    });
+    service.on('speechError', session => {
+        registrarEvento(session, 'Error de mensaje de voz', 'No se pudo iniciar o continuar el mensaje de /decir. El contenido no se registra.');
+    });
 }
 module.exports = { obtenerCanalVoz, obtenerSesionActiva, responderError, crearMensajeCola, mostrarLetra, vincularInterfazMusica, crearMensajeReproduccion };

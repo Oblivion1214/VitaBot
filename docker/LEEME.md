@@ -72,6 +72,11 @@ límites solo después de medir reproducciones junto a Jellyfin y Nextcloud.
 en Compose. Fuera de este despliegue conservan los valores predeterminados de
 3, 3 y 2. Los logs de Docker tienen tres archivos de hasta 2 MiB por servicio.
 Las copias diarias del estado conservan la retención existente de siete días.
+El respaldo completo y automático del despliegue se configura según
+[RESPALDOS.md](RESPALDOS.md): conserva también secretos y código fuera de las
+imágenes, con rotación, permisos privados y verificación de extracción.
+Los controles locales de estado, inicio, parada y eliminación de contenedores
+para Homepage se describen en [HOMEPAGE.md](HOMEPAGE.md).
 
 Docker reinicia los procesos mediante `unless-stopped`, también tras reiniciar
 el servidor. `init: true` y diez segundos de gracia permiten recoger procesos

@@ -97,15 +97,25 @@ test('error e Idle del mismo recurso solo avanzan una vez', async t => {
 });
 test('TTS reserva la conexión antes de esperar e impide música o segundo TTS', async t => {
     const f = fixture(); t.after(() => f.service.close());
+    const inicios = [];
+    f.service.on('speechStart', (...datos) => inicios.push(datos));
     const speaking = f.service.speak(f.channel(), {}, 'Hola');
     assert.throws(() => f.service.enqueue(f.channel(), {}, [track('a')], 'u'), /hablar/);
     await assert.rejects(f.service.speak(f.channel(), {}, 'Dos'), /termine/);
     await tick(); const session = f.service.get('guild'); session.player.stop(); await speaking;
+    assert.equal(inicios.length, 1);
+    assert.equal(inicios[0].length, 1); // El evento no transporta el texto de /decir.
+    assert.equal(inicios[0][0], session);
     f.service.enqueue(f.channel(), {}, [track('a')], 'u'); await tick(); assert.equal(session.current.kind, 'music');
 });
 test('TTS fallido libera el bloqueo para música', async t => {
     const f = fixture({ worker: { speak: async () => { throw Error('offline'); } } }); t.after(() => f.service.close());
+    let errores = 0, inicios = 0;
+    f.service.on('speechStart', () => inicios++);
+    f.service.on('speechError', (...datos) => { errores++; assert.equal(datos.length, 1); });
     await assert.rejects(f.service.speak(f.channel(), {}, 'Hola'), /iniciar/);
+    assert.equal(errores, 1);
+    assert.equal(inicios, 0);
     f.service.enqueue(f.channel(), {}, [track('a')], 'u'); await tick(); assert.equal(f.service.get('guild').current.kind, 'music');
 });
 test('conflictos de canal y límite de sesiones no reemplazan la cola existente', t => {

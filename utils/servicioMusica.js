@@ -130,6 +130,7 @@ class SesionServidor {
         this.player.play(owner.resource);
         owner.started = true;
         if (owner.kind === 'music') this.service.emit('trackStart', this, owner);
+        else this.service.emit('speechStart', this);
     }
     finish(owner, error) {
         if (!owner || this.current !== owner) return;
@@ -138,7 +139,10 @@ class SesionServidor {
         owner.controller.abort();
         owner.source?.close();
         if (owner.kind === 'tts') {
-            if (error) owner.reject(error); else owner.resolve();
+            if (error) {
+                this.service.emit('speechError', this);
+                owner.reject(error);
+            } else owner.resolve();
         } else if (error) {
             // A worker outage must not open hundreds of failed streams from an existing playlist.
             this.tracks = [];
