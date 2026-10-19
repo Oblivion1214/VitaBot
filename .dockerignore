@@ -1,0 +1,24 @@
+# El contexto de construcción solo incluye código y manifiestos públicos.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!index.js
+!deploy-commands.js
+!ecosistema.config.cjs
+!commands/
+!commands/*.js
+!utils/
+!utils/*.js
+!audio/
+!audio/*.js
+!config/
+!config/personajes.json
+!config/personalidadVita.js
+!docker/
+!docker/*.cjs
+!test/
+!test/*.js
+!scripts/
+!scripts/*.js
+!scripts/*.ps1

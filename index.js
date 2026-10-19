@@ -1,18 +1,24 @@
 // index.js — VitaBot
-// 1. CARGA DE ENTORNO (siempre lo primero)
-require('dotenv').config({ override: true });
+// El límite de errores se instala antes del entorno, las dependencias y el login.
+const manejoErrores = require('./utils/manejoErrores').instalarManejoErrores();
+// 1. CARGA DE ENTORNO
+require('dotenv').config({ override: true, quiet: true });
+require('./utils/identidadEjecucion').validarIdentidadEjecucion();
+const { iniciarSesionSegura, esServidorPermitido, esEntornoPruebas } = require('./utils/identidadEjecucion');
 
 // 2. IMPORTACIONES
-const { Client, Collection, GatewayIntentBits, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
-const express = require('express'); // <-- AÑADIMOS EXPRESS AQUÍ
+const { Client, Collection, GatewayIntentBits, MessageFlags } = require('discord.js');
 const fs = require('fs');
 const Genius = require('genius-lyrics');
-const { log, sanitizeErrorMessage, obtenerConfigServidor } = require('./utils/logger');
-const { inicializarPlayer } = require('./utils/musicPlayer');
+const { log, obtenerConfigServidor } = require('./utils/logger');
+const { ServicioMusica } = require('./utils/servicioMusica');
+const { vincularInterfazMusica } = require('./utils/interfazMusica');
 const { manejarBotonesMusica } = require('./utils/musicButtons');
 const { registrarGuildCreate, reconciliarServidores, setupCollectors } = require('./utils/guildSetup');
-const axios = require('axios'); // Para análisis de enlaces en tiempo real
-const { escanearEnlace, ejecutarCuarentena, dominiosSeguros } = require('./utils/linkGuard');
+const { escanearEnlace, ejecutarCuarentena } = require('./utils/linkGuard');
+const { manejarRolAutoservicio } = require('./utils/rolesAutoservicio');
+const { manejarBotonCuarentena } = require('./utils/cuarentena');
+const { iniciarMantenimiento } = require('./utils/mantenimiento');
 
 // 3. CLIENTE
 const client = new Client({
@@ -23,13 +29,21 @@ const client = new Client({
         GatewayIntentBits.GuildVoiceStates
     ]
 });
+manejoErrores.registrarLimpieza(() => client.destroy());
 
 // 4. GENIUS (letras de canciones)
 client.genius = new Genius.Client(process.env.GENIUS_TOKEN);
 console.log('» | Motor de letras (Genius SDK) sincronizado.');
 
 // 5. MÚSICA
-const player = inicializarPlayer(client);
+client.music = new ServicioMusica(client, { maxSessions: esEntornoPruebas() ? 1 : 3 });
+manejoErrores.registrarLimpieza(() => client.music.close());
+const maintenance = iniciarMantenimiento();
+manejoErrores.registrarLimpieza(() => maintenance.close());
+vincularInterfazMusica(client.music);
+client.on('voiceStateUpdate', (oldState, newState) => {
+    if (esServidorPermitido(newState.guild?.id)) client.music.handleVoiceState(oldState, newState);
+});
 
 // 6. EVENTOS DE SERVIDOR
 registrarGuildCreate(client);
@@ -48,13 +62,14 @@ for (const file of commandFiles) {
 client.once('clientReady', async () => {
     console.log(`» | VitaBot encendido como: ${client.user.tag}`);
     console.log(`» | ${client.commands.size} comandos listos.`);
-    client.user.setActivity('/play | v3.0 Hi-Fi', { type: 2 });
+    client.user.setActivity(esEntornoPruebas() ? 'Pruebas | /play' : '/play | v4.0', { type: 2 });
 
     await reconciliarServidores(client);
 });
 
 // 9. DISPATCHER DE INTERACCIONES
 client.on('interactionCreate', async (interaction) => {
+    if (manejoErrores.estaCerrando() || !esServidorPermitido(interaction.guildId)) return;
     // ── SLASH COMMANDS ──
     if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
@@ -75,7 +90,7 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.reply({
                     content: `⏳ Vita está recargando Graf Eisen. Espera <t:${tiempoVisual}:R> para usar \`/${command.data.name}\`.`,
                     flags: MessageFlags.Ephemeral
-                });
+                }).catch(() => manejoErrores.registrarError('interaccion'));
             }
         }
 
@@ -84,15 +99,15 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             await command.execute(interaction);
-        } catch (error) {
-            console.error('[Error de Ejecución]:', error);
+        } catch {
+            manejoErrores.registrarError('comando');
 
             await log(interaction.guild, {
                 categoria: 'sistema',
                 titulo: 'Error en comando',
                 descripcion: `Falló el comando \`/${interaction.commandName}\`.`,
                 usuario: interaction.user,
-                error: sanitizeErrorMessage(error.message),
+                error: 'Ocurrió un error interno al ejecutar el comando.',
             }).catch(() => null);
 
             const msgError = {
@@ -106,14 +121,14 @@ client.on('interactionCreate', async (interaction) => {
                 } else {
                     await interaction.reply(msgError).catch(() => null);
                 }
-            } catch (interactionError) {
-                console.error('[Anti-Crash] La interacción expiró:', interactionError.message);
+            } catch {
+                manejoErrores.registrarError('interaccion');
             }
         }
 
     // ── BOTONES DE MÚSICA ──
     } else if (interaction.isButton() && (interaction.customId.startsWith('musica_'))) {
-        await manejarBotonesMusica(interaction, player);
+        await manejarBotonesMusica(interaction);
 
     // ── SETUP DE BIENVENIDA (guildCreate): confirm, change_lang, cancel ──
     // ⚠️ IMPORTANTE: estos botones son manejados por el collector de guildSetup.js
@@ -146,185 +161,39 @@ client.on('interactionCreate', async (interaction) => {
             flags: MessageFlags.Ephemeral
         }).catch(() => null);
 
-    // ── BOTONES DE ROLES (NUEVO) ──
     } else if (interaction.isButton() && interaction.customId.startsWith('dar_rol_')) {
-        const roleId = interaction.customId.replace('dar_rol_', '');
-        const role = interaction.guild.roles.cache.get(roleId);
-        const member = interaction.member;
-
-        if (!role) {
-            return interaction.reply({ 
-                content: '❌ No pude encontrar ese rol en mis registros mágicos.', 
-                flags: MessageFlags.Ephemeral 
-            });
-        }
-
-        try {
-            // Lógica de alternancia (Add/Remove)
-            if (member.roles.cache.has(roleId)) {
-                await member.roles.remove(roleId);
-                await interaction.reply({ content: `✅ Te he quitado el rol **${role.name}**.`, flags: MessageFlags.Ephemeral });
-            } else {
-                await member.roles.add(roleId);
-                await interaction.reply({ content: `✅ Ahora tienes el rol **${role.name}**.`, flags: MessageFlags.Ephemeral });
-            }
-
-            // Auditoría de moderación
-            await log(interaction.guild, {
-                categoria: 'moderacion',
-                titulo: 'Asignación de Rol Interactiva',
-                descripcion: `El usuario ${member.user.tag} ha actualizado su rol: **${role.name}**.`,
-                usuario: member.user
-            });
-
-        } catch (error) {
-            console.error('[Error de Roles]:', error);
-            await interaction.reply({ 
-                content: '❌ No tengo poder suficiente para gestionar ese rol. ¡Asegúrate de que mi rol esté por encima del que intentas dar!', 
-                flags: MessageFlags.Ephemeral 
-            });
-        }
-    }else if (interaction.isButton() && interaction.customId.startsWith('approve_link_')) {
-        // Para aprobar, restauramos el mensaje original en el canal y actualizamos el log de auditoría
-        try {
-            const canalId = interaction.customId.replace('approve_link_', '');
-            const canalOriginal = interaction.guild.channels.cache.get(canalId);
-            
-            // Extraemos los datos del embed que enviamos al log
-            const embedLog = interaction.message.embeds[0];
-            const contenidoOriginal = embedLog.fields.find(f => f.name === '📝 Contenido Original')?.value;
-            const autorOriginal = embedLog.author.name;
-
-            if (canalOriginal && contenidoOriginal) {
-                // Re-posteamos el mensaje en el canal original
-                await canalOriginal.send({
-                    content: `✅ **Mensaje Restaurado:** El enlace enviado por **${autorOriginal}** fue verificado por un moderador.\n\n> ${contenidoOriginal}`
-                });
-
-                // Actualizamos el log de auditoría
-                await interaction.update({ 
-                    content: `✅ **Aprobado:** El mensaje de \`${autorOriginal}\` ha sido restaurado en <#${canalId}>.`, 
-                    components: [] 
-                });
-            } else {
-                throw new Error('No se pudo encontrar el canal o el contenido original.');
-            }
-        } catch (error) {
-            console.error('[Security-Shield] Error al restaurar:', error.message);
-            await interaction.reply({ content: '❌ Error al intentar restaurar el mensaje.', flags: MessageFlags.Ephemeral });
-        }
-
-    } else if (interaction.isButton() && interaction.customId.startsWith('deny_link_')) {
-        // Para denegar, simplemente deshabilitamos el log de auditoría
-        await interaction.update({ 
-            content: '🚨 **Acción Confirmada:** El mensaje malicioso ha sido purgado de los registros activos.', 
-            components: [] 
-        });
+        await manejarRolAutoservicio(interaction);
+    } else if (interaction.isButton() && /^(approve|deny|view)_link_/.test(interaction.customId)) {
+        await manejarBotonCuarentena(interaction);
     }
 });
 
 
 // 10. Monitor de Enlaces en Tiempo Real
 client.on('messageCreate', async (message) => {
-    if (message.author.bot || !message.content.includes('http')) return;
+    if (manejoErrores.estaCerrando() || !esServidorPermitido(message.guildId)) return;
+    if (!message.guild || message.author.bot || !message.content.includes('http')) return;
 
     const config = obtenerConfigServidor(message.guildId, 'es', message.guild?.name);
-    if (!config.categorias.seguridad) return;
+    if (!config.activo || !config.categorias?.seguridad) return;
 
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const links = message.content.match(urlRegex);
     if (!links) return;
 
     for (const link of links) {
-        console.log(`[Security] Analizando enlace de ${message.author.tag}: ${link}`);
         try {
-            const urlObj = new URL(link);
-            const hostname = urlObj.hostname.replace('www.', '');
-            if (dominiosSeguros.some(d => hostname.endsWith(d))) continue;
 
-            const reporte = await escanearEnlace(link);
+            const reporte = await escanearEnlace(link, { scope: message.guildId });
             if (reporte.detectado) {
-                console.warn(`[Security] MALWARE DETECTADO: ${link} en "${message.guild.name}"`);
                 await ejecutarCuarentena(message, reporte);
+                break;
             }
         } catch (e) {
-            console.error('[Security-Shield] Error:', e.message);
+            console.warn('[Security-Shield] Enlace no analizable o proveedor no disponible.');
         }
     }
 });
 
-// 11. ANTI-CRASH GLOBAL
-process.on('unhandledRejection', (reason) => {
-    console.error('[Anti-Crash] Rechazo no manejado:', reason);
-});
-process.on('uncaughtException', (err) => {
-    console.error('[Anti-Crash] Excepción no capturada:', err);
-});
-
-// 12. LOGIN
-client.login(process.env.TOKEN);
-
-// ─────────────────────────────────────────────────────────────────
-// 13. SERVIDOR DE WEBHOOKS (Escucha a la PC Local para actualizar Paneles)
-// ─────────────────────────────────────────────────────────────────
-const app = express();
-app.use(express.json());
-
-const mensajesActivos = new Map();
-
-app.post('/webhook/track-change', async (req, res) => {
-    const { guildId, channelId, track } = req.body;
-    
-    // 🌟 LOG DE RECEPCIÓN
-    console.log(`[Webhook] 📥 Recibido cambio de pista: ${track?.title}`);
-    
-    if (!guildId || !channelId || !track) return res.status(400).send('Faltan datos');
-
-    try {
-        const guild = client.guilds.cache.get(guildId);
-        const canal = guild?.channels.cache.get(channelId);
-        
-        if (!canal) {
-            console.warn(`[Webhook] ⚠️ No pude encontrar el canal de texto ${channelId}`);
-            return res.status(404).send('Canal no encontrado');
-        }
-
-        const msgViejoId = mensajesActivos.get(guildId);
-        if (msgViejoId) {
-            const msgViejo = await canal.messages.fetch(msgViejoId).catch(() => null);
-            if (msgViejo) await msgViejo.edit({ components: [] }).catch(() => null);
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle('🎵 Reproduciendo Ahora')
-            .setDescription(`**[${track.title}](${track.url})**\nAutor: ${track.author}`)
-            .setFooter({ text: 'Motor: 🏠 PC Local (Hi-Fi)' })
-            .setColor('#00C853');
-
-        if (track.thumbnail) embed.setThumbnail(track.thumbnail);
-
-        const fila1 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('musica_pausa').setEmoji('⏯️').setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId('musica_salto').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('musica_stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
-            new ButtonBuilder().setCustomId('musica_shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('musica_queue').setEmoji('📜').setStyle(ButtonStyle.Secondary)
-        );
-        const fila2 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('musica_lyrics').setLabel('Ver Letras').setEmoji('🎤').setStyle(ButtonStyle.Secondary)
-        );
-
-        const nuevoMsg = await canal.send({ embeds: [embed], components: [fila1, fila2] });
-        mensajesActivos.set(guildId, nuevoMsg.id);
-        
-        console.log(`[Webhook] ✅ Panel con botones dibujado en Discord.`);
-        res.status(200).send('Panel actualizado');
-    } catch (error) {
-        console.error('[Webhook] 🔴 Error al actualizar panel:', error.message);
-        res.status(500).send('Error interno');
-    }
-});
-
-app.listen(8080, '0.0.0.0', () => {
-    console.log('📡 | Receptor de Telemetría (Webhook) escuchando en puerto 8080');
-});
+// 11. LOGIN: un rechazo tampoco puede exponer el error del proveedor.
+iniciarSesionSegura(client).catch(() => manejoErrores.fatal('inicioSesion'));

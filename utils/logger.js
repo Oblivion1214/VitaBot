@@ -1,10 +1,11 @@
 // utils/logger.js — Sistema de auditoría v4.0 (Sin permisos de Admin)
 const { EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
-const fs = require('fs');
 const path = require('path');
+const { crearAlmacenConfiguracionJson } = require('./almacenConfiguracionJson');
 
 const LOG_CHANNEL_NAME = 'vitabot-logs';
-const CONFIG_PATH = path.join(__dirname, '../config/audit-config.json');
+const CONFIG_PATH = process.env.AUDIT_CONFIG_PATH || path.join(__dirname, '../config/audit-config.json');
+const configStore = crearAlmacenConfiguracionJson(CONFIG_PATH);
 
 const COLORS = {
     musica:      '#FF9900',
@@ -82,23 +83,11 @@ async function invalidarPanelSetup(client, guildId) {
 // GESTIÓN DE CONFIGURACIÓN (audit-config.json)
 // ─────────────────────────────────────────────
 function cargarConfig() {
-    try {
-        if (!fs.existsSync(CONFIG_PATH)) return {};
-        return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    } catch {
-        return {};
-    }
+    return configStore.read();
 }
 
 function guardarConfig(config) {
-    try {
-        // Asegurarse de que el directorio /config existe
-        const dir = path.dirname(CONFIG_PATH);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
-    } catch (e) {
-        console.error('[Logger] Error al escribir audit-config.json:', e.message);
-    }
+    configStore.write(config);
 }
 
 /**

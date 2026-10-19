@@ -1,6 +1,9 @@
 # Variables de entorno — NUNCA subir esto
 .env
+.env.audio
 .env.local
+.env.*.tmp
+.vitabot-pruebas
 
 # Cookies de YouTube — contienen sesión de cuenta de YouTube, NUNCA subir esto
 youtube-cookie.json
@@ -9,9 +12,14 @@ youtube-cookie.txt
 
 # Configuración de auditoría — datos del servidor y credenciales, NUNCA subir esto
 audit-config.json
+security-state.json
+security-state.json.*.tmp
+security-state.json.lock
+config/backups/
 
 # Dependencias — se reinstalan con npm install
 node_modules/
+.cache/
 
 # Archivos de sistema de macOS y Windows
 .DS_Store

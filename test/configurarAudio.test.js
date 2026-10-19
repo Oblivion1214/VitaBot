@@ -1,0 +1,21 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { parseEnv } = require('node:util');
+const { configurarAudio } = require('../scripts/configurar-audio');
+test('configuración idempotente comparte una clave por propósito sin copiar el token al worker', t => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vita-config-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const file = path.join(root, '.env');
+    fs.writeFileSync(file, 'TOKEN=discord-ficticio\nOTRA_CLAVE=preservar\n');
+    configurarAudio({ root, url: 'http://127.0.0.1:3001', worker: true });
+    const before = fs.readFileSync(file, 'utf8');
+    configurarAudio({ root, url: 'http://127.0.0.1:3001', worker: true });
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+    const bot = parseEnv(before), worker = parseEnv(fs.readFileSync(path.join(root, '.env.audio'), 'utf8'));
+    assert.equal(bot.OTRA_CLAVE, 'preservar'); assert.equal(worker.TOKEN, undefined);
+    assert.equal(bot.AUDIO_SHARED_TOKEN, worker.AUDIO_SHARED_TOKEN); assert.equal(worker.AUDIO_SHARED_TOKEN.length, 64);
+    assert.notEqual(worker.AUDIO_SHARED_TOKEN, bot.TOKEN);
+});

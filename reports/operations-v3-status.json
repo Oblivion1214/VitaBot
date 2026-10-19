@@ -1,0 +1,94 @@
+{
+  "architecture": "audio v2; operational improvements v3",
+  "implementation": {
+    "geminiSdk": "@google/genai 2.30.0",
+    "legacySdkRemoved": true,
+    "lazySdkLoad": true,
+    "sharedGeminiService": true,
+    "chatHistoryOrCache": false,
+    "linkCache": {
+      "entries": 200,
+      "completeTtlSeconds": 120,
+      "incompleteTtlSeconds": 30
+    },
+    "scanQueue": {
+      "active": 3,
+      "queued": 6,
+      "maxWaitSeconds": 5
+    },
+    "providerBudgetsPerMinute": {
+      "urlhaus": 12,
+      "google": 30,
+      "ipqs": 10,
+      "virustotal": 4
+    },
+    "geminiBudgets": {
+      "active": 2,
+      "queued": 4,
+      "perScopePerMinute": 6,
+      "globalPerMinute": 12,
+      "totalSeconds": 35,
+      "attemptSeconds": 15,
+      "cooldownOn429Seconds": 30
+    },
+    "images": {
+      "active": 1,
+      "queued": 1,
+      "maxModels": 2,
+      "maxMiB": 8
+    },
+    "windowsAudioStartup": "current-user Startup shortcut, hidden, refreshes Windows PATH",
+    "audioSupervisor": {
+      "healthSeconds": 30,
+      "failuresBeforeRestart": 2,
+      "maxRestartBackoffSeconds": 30,
+      "singleInstance": true
+    },
+    "vmMaintenance": {
+      "extraServices": 0,
+      "logLimitMiB": 2,
+      "logHistoryCopies": 2,
+      "dailySnapshotsPerFile": 7,
+      "backupCleanupHours": 1
+    },
+    "staging": {
+      "separateIdentityAndStateRequired": true,
+      "loginAndCommandRegistrationGuarded": true
+    }
+  },
+  "validation": {
+    "windowsTests": 125,
+    "linuxTests": 125,
+    "failed": 0,
+    "npmAuditKnownVulnerabilities": 0,
+    "geminiRealResponseWindows": true,
+    "geminiRealResponseLinux": true,
+    "workerCrashRecoveryTest": true,
+    "windowsStartupWithMinimalPathTest": true,
+    "duplicateSupervisorRejected": true,
+    "productionOnline": true,
+    "productionPm2Processes": 1,
+    "productionSampleRssMiB": 92.1,
+    "newVmErrorLogBytes": 0,
+    "privateBackupsCreated": 2,
+    "privateBackupModesVerified": true,
+    "audioWorkerHealth": "ok",
+    "registeredCommands": 21,
+    "archiveSha256": "783af14357e6b9d67f08e128906aca41ea6d70591e50da153309a702ed4c8657"
+  },
+  "pending": {
+    "googleSafeBrowsingKey": "API_KEY_INVALID; replace securely in .env",
+    "independentDiscordTestApplication": "needs its own TOKEN, CLIENT_ID and state paths before activation"
+  },
+  "limits": {
+    "windowsLoginTrigger": "shortcut command tested; no actual logout/reboot performed",
+    "images": "limits and failure handling tested with simulated providers; no billed image generation requested",
+    "backups": "local to VM; do not protect against loss of its disk",
+    "memory": "single observed RSS sample; not a sustained load benchmark"
+  },
+  "rollback": {
+    "vm": "~/.vitabot-backups/operations-20261018/",
+    "windowsStartup": "scripts/install-audio-startup.ps1 -Remove"
+  },
+  "evidence": ".cache/operations-v3-production.png"
+}

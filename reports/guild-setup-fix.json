@@ -1,0 +1,40 @@
+{
+  "incident": "guild setup acceptance differs between checkouts",
+  "guildName": "Al toke prro",
+  "evidence": {
+    "productionConfirmedBefore": true,
+    "testingConfirmedBefore": false,
+    "testingChannelModeBefore": "auto",
+    "productionChannelModeBefore": "custom",
+    "leaveLog": "Setup nunca se completó ... Saliendo.",
+    "trigger": "testing startup reconciled a previously accepted guild using a different configuration file"
+  },
+  "fix": {
+    "sharedPersistentConfiguration": true,
+    "preserveExistingConfirmations": true,
+    "preserveProductionPreferences": true,
+    "atomicWrites": true,
+    "timeoutRechecksConfirmation": true,
+    "duplicateSessionsBlocked": true,
+    "acknowledgeBeforeChannelApi": true
+  },
+  "tests": {
+    "passed": 64,
+    "failed": 0,
+    "newRegressionCases": 17,
+    "report": "reports/tests-guild-setup-fix.txt"
+  },
+  "deployment": {
+    "codeInBothCheckouts": true,
+    "sharedConfirmedGuilds": 3,
+    "pm2Saved": true,
+    "postRestartVerification": "passed",
+    "bothCopiesConfirmedAffectedGuild": true,
+    "bothCopiesUseSharedFile": true,
+    "productionChannelModePreserved": "custom",
+    "newErrorBytes": 0,
+    "productionOnline": true,
+    "audioWorkerHealthPassed": true
+  },
+  "artifactSha256": "446a76935297f1eb5a23e24794827cdef8ba3d9b4fe541d7ef880ad38ce381de"
+}
