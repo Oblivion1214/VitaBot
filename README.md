@@ -156,15 +156,27 @@ bot ya confirmado. `/config` sigue disponible para administradores autorizados.
 personalidad de Vita, de *Mahou Shoujo Lyrical Nanoha*. La personalidad y las
 instrucciones de confidencialidad están en `config/personalidadVita.js`.
 
-La respuesta es efímera. El comando no copia mensajes ni respuestas a los logs y
-no conserva historial. Envía a Gemini la instrucción de personalidad y el mensaje
+La respuesta se publica en el canal donde se ejecuta el comando. El comando no
+copia mensajes ni respuestas a los logs y no conserva historial. Envía a Gemini
+la instrucción de personalidad y el mensaje
 actual; no adjunta perfiles de Discord, archivos del proyecto ni conversaciones
 de otros usuarios. El mensaje sí es procesado por Google. Las instrucciones de
 comportamiento no garantizan que el modelo nunca se equivoque.
 
-Configura `GEMINI_API_KEY`. `GEMINI_CHAT_MODELS` permite hasta tres IDs separados por
-comas, en orden de preferencia. Se limita la entrada a mil caracteres y cada
-intento a quince segundos, con un presupuesto total de treinta y cinco segundos. Al modificar los comandos, regístralos nuevamente.
+Configura `GEMINI_API_KEY`. `GEMINI_CHAT_MODELS` permite hasta ocho IDs separados por
+comas, en orden de preferencia. Por defecto intenta 3.5 Flash-Lite, 3.1 Flash-Lite,
+3.6 Flash, 3.8 Flash y 3 Flash Preview. Los modelos antiguos pueden añadirse si
+Google aún permite usarlos en el proyecto. `GEMINI_ANALYSIS_MODELS` permite una
+lista independiente para `/analizar`.
+
+Se limita la entrada a mil caracteres y cada intento a quince segundos, con un
+presupuesto total de treinta y cinco segundos para toda la lista. Las cuotas por
+modelo respetan la espera indicada por Google y permiten probar otro respaldo;
+las cuotas generales detienen todos los intentos. Los fallos temporales y los
+modelos no disponibles se recuerdan para evitar consultas repetidas. Los logs
+`[Gemini]` muestran solo modelo, tipo de operación, motivo y código HTTP; nunca
+claves, mensajes, respuestas, IDs personales ni errores crudos del proveedor.
+Al modificar los comandos, regístralos nuevamente.
 
 Los demás comandos incluyen configuración de servidor, roles, limpieza de
 mensajes, análisis de enlaces, estadísticas, generación de imágenes y juegos.

@@ -20,10 +20,10 @@ module.exports = {
     cooldown: 10,
     data: new SlashCommandBuilder()
         .setName('chatconvita')
-        .setDescription('Habla con Vita y recibe ayuda en una conversación privada')
+        .setDescription('Habla con Vita y recibe ayuda en este canal')
         .addStringOption(option => option
             .setName('mensaje')
-            .setDescription('Lo que quieres decirle a Vita (solo tú verás su respuesta)')
+            .setDescription('Lo que quieres decirle a Vita')
             .setRequired(true)
             .setMinLength(1)
             .setMaxLength(1000)),
@@ -55,8 +55,7 @@ module.exports = {
         setTimeout(() => usoGlobal.delete(scope), COOLDOWN_MS).unref();
 
         try {
-            // La privacidad se decide al diferir: editReply no puede volver privada una respuesta pública.
-            await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+            await interaction.deferReply();
             const result = await gemini.generate({ contents: promptUsuario, scope });
             const respuesta = result.status === 'blocked' ? 'Eso no puedo ayudarte a hacerlo. Podemos buscar una alternativa segura.' : result.text;
 

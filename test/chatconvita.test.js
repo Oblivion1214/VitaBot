@@ -27,6 +27,7 @@ function cargarComando(generar = async () => normalResponse('Vamos a resolverlo.
             if (name === '../config/personalidadVita') return { INSTRUCCIONES_SISTEMA_VITA };
             if (name === '../utils/servicioGemini') return { gemini: require('../utils/servicioGemini').crearServicioGemini({
                 env: sandbox.process.env, now: () => now, policy: { run: (_scope, work) => work() },
+                registrar: datos => avisos.push(JSON.stringify(datos)),
                 clientFactory: () => ({ models: { generateContent: async ({ model, contents, config }) => {
                     const legacyConfig = { ...config, model };
                     const opciones = { timeout: config.httpOptions.timeout };
@@ -56,11 +57,12 @@ function interaccion(mensaje = 'Explícame una promesa en JavaScript.', guildId 
     };
 }
 
-test('responde de forma privada y solo envía al proveedor el mensaje actual y la personalidad', async () => {
+test('responde en el canal y solo envía al proveedor el mensaje actual y la personalidad', async () => {
     const { command, peticiones } = cargarComando(async () => normalResponse('Claro. @everyone'));
     const i = interaccion('Texto privado de prueba');
     await command.execute(i);
-    assert.equal(i.respuestas[0].flags, discord.MessageFlags.Ephemeral);
+    assert.equal(i.respuestas[0].tipo, 'defer');
+    assert.equal((i.respuestas[0].flags ?? 0) & discord.MessageFlags.Ephemeral, 0);
     assert.equal(peticiones.length, 1);
     assert.equal(peticiones[0].mensaje, 'Texto privado de prueba');
     assert.equal(peticiones[0].config.systemInstruction, INSTRUCCIONES_SISTEMA_VITA);
@@ -131,13 +133,13 @@ test('no reintenta errores de credenciales ni registra detalles privados del pro
     assert.ok(!JSON.stringify([avisos, i.respuestas]).includes('mensaje=privado'));
 });
 
-test('acota a tres intentos los fallos transitorios', async () => {
+test('permite usar un cuarto modelo de respaldo ante fallos transitorios', async () => {
     const { command, peticiones } = cargarComando(async () => {
         throw Object.assign(new Error('servicio ocupado'), { status: 503 });
     }, { GEMINI_CHAT_MODELS: 'gemini-a,gemini-b,gemini-c,gemini-d' });
     const i = interaccion();
     await command.execute(i);
-    assert.equal(peticiones.length, 3);
+    assert.equal(peticiones.length, 4);
     assert.ok(i.respuestas.at(-1).content.includes('inténtalo'));
 });
 
