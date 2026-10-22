@@ -152,9 +152,13 @@ bot ya confirmado. `/config` sigue disponible para administradores autorizados.
 
 ## Conversación con Vita
 
-`/chatconvita` ayuda a programar, estudiar, redactar y resolver dudas con la
-personalidad de Vita, de *Mahou Shoujo Lyrical Nanoha*. La personalidad y las
+`/chatconvita` sirve para charlar y divertirse con la personalidad de Vita, de
+*Mahou Shoujo Lyrical Nanoha*: anime, videojuegos, historias, bromas y adivinanzas.
+Declina las peticiones de programación y ayuda técnica con IA; no ofrece tareas
+ni tutorías. Las peticiones técnicas claras se responden localmente, sin consumir
+Gemini, y se descartan respuestas que contengan código. La personalidad y las
 instrucciones de confidencialidad están en `config/personalidadVita.js`.
+Estas restricciones pertenecen al chat; `/analizar` conserva su función de revisar enlaces.
 
 La respuesta se publica en el canal donde se ejecuta el comando. El comando no
 copia mensajes ni respuestas a los logs y no conserva historial. Envía a Gemini
