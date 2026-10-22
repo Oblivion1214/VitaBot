@@ -8,10 +8,12 @@ Image-generation prompts are no longer copied into audit logs. Other command int
 Discord audit messages remain until deleted by administrators or Discord.
 
 2. Chat and external services
-/chatconvita replies are ephemeral. It sends the current message and character
+/chatconvita replies are posted in the channel and visible to people with access.
+It sends the current message and character
 instructions to Google's Gemini API, without attaching Discord profiles, project
 files or other users' conversations. It does not retain chat history or copy chat
-prompts/responses into audit logs. Ephemeral replies still involve Google processing.
+prompts/responses into audit logs. Chat replies remain in Discord until deleted.
+Google processes the submitted message.
 Other integrations send the inputs necessary to their respective providers.
 Configured link-reputation providers receive URLs. urlscan is disabled by default;
 explicit activation only attempts private reports and excludes query strings.
