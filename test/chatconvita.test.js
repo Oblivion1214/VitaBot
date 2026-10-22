@@ -25,6 +25,7 @@ function cargarComando(generar = async () => normalResponse('Vamos a resolverlo.
         require(name) {
             if (name === 'discord.js') return discord;
             if (name === '../config/personalidadVita') return { INSTRUCCIONES_SISTEMA_VITA };
+            if (name === '../utils/charlaVita') return require('../utils/charlaVita');
             if (name === '../utils/servicioGemini') return { gemini: require('../utils/servicioGemini').crearServicioGemini({
                 env: sandbox.process.env, now: () => now, policy: { run: (_scope, work) => work() },
                 registrar: datos => avisos.push(JSON.stringify(datos)),
@@ -46,7 +47,7 @@ function cargarComando(generar = async () => normalResponse('Vamos a resolverlo.
     };
 }
 
-function interaccion(mensaje = 'Explícame una promesa en JavaScript.', guildId = 'servidor-a', userId = 'usuario-a') {
+function interaccion(mensaje = 'Vita, ¿qué harías en un día libre?', guildId = 'servidor-a', userId = 'usuario-a') {
     const respuestas = [];
     return {
         guildId, user: { id: userId }, respuestas,
@@ -80,7 +81,7 @@ test('limita la salida completa a 2000 caracteres incluso con una entrada larga 
     const salida = i.respuestas.at(-1).content;
     assert.ok(salida.length <= 2000);
     assert.ok(salida.isWellFormed());
-    assert.ok(salida.includes('por partes'));
+    assert.ok(salida.includes('otra charla'));
 });
 
 test('admite mensajes directos sin acceder a interaction.guild', async () => {
@@ -152,7 +153,7 @@ test('un bloqueo de seguridad no se intenta eludir cambiando de modelo', async (
         const i = interaccion();
         await command.execute(i);
         assert.equal(peticiones.length, 1);
-        assert.ok(i.respuestas.at(-1).content.includes('alternativa segura'));
+        assert.ok(i.respuestas.at(-1).content.includes('adivinanza'));
     }
 });
 
@@ -200,4 +201,38 @@ test('serializa el comando con los límites de entrada para Discord', () => {
     assert.equal(data.name, 'chatconvita');
     assert.equal(data.options[0].max_length, 1000);
     assert.equal(data.options[0].min_length, 1);
+});
+
+test('las peticiones técnicas claras reciben una respuesta pública en personaje sin consumir Gemini', async () => {
+    const { command, peticiones } = cargarComando();
+    for (const mensaje of ['Hazme un programa', 'Escribe un script de Python', 'Ayúdame con un prompt para ChatGPT']) {
+        const i = interaccion(mensaje);
+        await command.execute(i);
+        assert.equal(i.respuestas[0].tipo, 'reply');
+        assert.equal((i.respuestas[0].flags ?? 0) & discord.MessageFlags.Ephemeral, 0);
+        assert.match(i.respuestas[0].content, /^\*\*Vita:\*\*/);
+        assert.match(i.respuestas[0].content, /adivinanza/);
+        assert.equal(i.respuestas[0].allowedMentions.parse.length, 0);
+    }
+    assert.equal(peticiones.length, 0);
+});
+
+test('descarta código y tutoriales de IA del proveedor sin publicarlos ni pedir otra generación', async () => {
+    for (const texto of ['```python\nprint("dato que no debe publicarse")\n```',
+        'Primero abre ChatGPT y pega estas instrucciones para crear tu asistente.']) {
+        const { command, peticiones } = cargarComando(async () => normalResponse(texto));
+        const i = interaccion();
+        await command.execute(i);
+        assert.equal(peticiones.length, 1);
+        assert.match(i.respuestas.at(-1).content, /adivinanza/);
+        assert.ok(!i.respuestas.at(-1).content.includes(texto));
+    }
+});
+
+test('una anécdota sobre programar sigue siendo una charla con el personaje', async () => {
+    const { command, peticiones } = cargarComando(async () => normalResponse('Hasta Graf Eisen necesita una pausa. Descansa un poco.'));
+    const i = interaccion('Estoy cansado de programar, solo quiero charlar.');
+    await command.execute(i);
+    assert.equal(peticiones.length, 1);
+    assert.match(i.respuestas.at(-1).content, /Graf Eisen/);
 });

@@ -141,3 +141,19 @@ test('un límite local genera un diagnóstico genérico sin llamar al proveedor'
     assert.equal(f.registros[0].motivo, 'limite_local');
     assert.doesNotMatch(JSON.stringify(f.registros), /servidor-privado|secreto/);
 });
+
+test('las reglas de diversión del chat no desactivan el análisis técnico de enlaces', async () => {
+    const instrucciones = [];
+    const servicio = crearServicioGemini({ env: { GEMINI_API_KEY: 'fake' },
+        clientFactory: () => ({ models: { generateContent: async solicitud => {
+            instrucciones.push(solicitud.config.systemInstruction);
+            return { text: 'Listo' };
+        } } }),
+    });
+    await servicio.generate({ scope: 'chat', contents: 'Hola' });
+    await servicio.generate({ scope: 'analisis', kind: 'analysis', contents: 'Resultados técnicos de prueba' });
+    assert.match(instrucciones[0], /CHARLA Y DIVERSIÓN/);
+    assert.doesNotMatch(instrucciones[1], /CHARLA Y DIVERSIÓN|LÍMITES DEL CHAT/);
+    assert.match(instrucciones[1], /Para analizar enlaces/);
+    assert.match(instrucciones[1], /PRIVACIDAD Y CONFIDENCIALIDAD/);
+});

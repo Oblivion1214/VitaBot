@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { gemini } = require('../utils/servicioGemini');
+const { esSolicitudTecnica, esRespuestaTecnica, RESPUESTA_TEMA_TECNICO, RESPUESTA_TEMA_NO_PERMITIDO } = require('../utils/charlaVita');
 
 const usoGlobal = new Map();
 const solicitudesEnCurso = new Set();
@@ -8,7 +9,7 @@ const RESPUESTA_NO_DISPONIBLE = 'Hmph… Ahora no puedo responder. Dame un momen
 
 function limitarRespuesta(texto) {
     const prefijo = '**Vita:** ';
-    const sufijo = '\n… Si quieres, pídeme que lo explique por partes.';
+    const sufijo = '\n… ¡Eso da para otra charla!';
     if (prefijo.length + texto.length <= 2000) return prefijo + texto;
     let recorte = texto.slice(0, 2000 - prefijo.length - sufijo.length);
     // No dejar medio emoji al cortar una cadena UTF-16.
@@ -20,7 +21,7 @@ module.exports = {
     cooldown: 10,
     data: new SlashCommandBuilder()
         .setName('chatconvita')
-        .setDescription('Habla con Vita y recibe ayuda en este canal')
+        .setDescription('Charla y diviértete con Vita en este canal')
         .addStringOption(option => option
             .setName('mensaje')
             .setDescription('Lo que quieres decirle a Vita')
@@ -35,6 +36,10 @@ module.exports = {
                 content: '¡Oye! Escríbeme un mensaje de entre 1 y 1000 caracteres.',
                 flags: MessageFlags.Ephemeral,
             });
+        }
+
+        if (esSolicitudTecnica(promptUsuario)) {
+            return interaction.reply({ content: limitarRespuesta(RESPUESTA_TEMA_TECNICO), allowedMentions: { parse: [] } });
         }
 
         if (!gemini.configured()) {
@@ -57,7 +62,8 @@ module.exports = {
         try {
             await interaction.deferReply();
             const result = await gemini.generate({ contents: promptUsuario, scope });
-            const respuesta = result.status === 'blocked' ? 'Eso no puedo ayudarte a hacerlo. Podemos buscar una alternativa segura.' : result.text;
+            const respuesta = result.status === 'blocked' ? RESPUESTA_TEMA_NO_PERMITIDO
+                : result.text && esRespuestaTecnica(result.text) ? RESPUESTA_TEMA_TECNICO : result.text;
 
             // No se guardan mensajes, respuestas ni identificadores del usuario en los logs de chat.
             return await interaction.editReply({
