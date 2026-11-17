@@ -18,9 +18,9 @@ function obtenerSesionActiva(interaction) {
     if (!session) throw new ErrorAudio('No hay una sesión de audio activa.', 404);
     return session;
 }
-async function responderError(interaction, error) {
+async function responderError(interaction, error, embeds = []) {
     const payload = { content: error instanceof ErrorAudio ? error.message : 'No pude completar la operación de audio. Intenta de nuevo.',
-        components: [], embeds: [], allowedMentions: { parse: [] } };
+        components: [], embeds, allowedMentions: { parse: [] } };
     if (interaction.deferred || interaction.replied) return interaction.editReply(payload).catch(() => null);
     return interaction.reply({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => null);
 }

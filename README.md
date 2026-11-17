@@ -30,7 +30,9 @@ La auditoría de dependencias tiene **0 vulnerabilidades conocidas**;
 el resultado actualizado está en `reports/npm-audit-operations-v3.json`.
 Esto describe las alertas de npm disponibles en esa fecha.
 
-Cada servidor tiene su propia cola, con hasta 200 pistas pendientes. El límite
+Cada audio o video admite hasta 2 horas de reproducción. Cada servidor tiene su
+propia cola, con hasta 6 horas o 200 pistas pendientes. Las pistas de duración
+desconocida reservan 2 horas de cola hasta que empieza su reproducción. El límite
 de Docker es una sesión, una transmisión y una búsqueda simultáneas. Fuera de
 Docker, los valores predeterminados son tres sesiones, tres transmisiones y dos
 búsquedas. Al saltar, detener, abandonar voz o cerrar el consumidor, se cancela
@@ -160,9 +162,9 @@ Gemini, y se descartan respuestas que contengan código. La personalidad y las
 instrucciones de confidencialidad están en `config/personalidadVita.js`.
 Estas restricciones pertenecen al chat; `/analizar` conserva su función de revisar enlaces.
 
-La respuesta se publica en el canal donde se ejecuta el comando. El comando no
-copia mensajes ni respuestas a los logs y no conserva historial. Envía a Gemini
-la instrucción de personalidad y el mensaje
+El mensaje del usuario aparece junto a la respuesta en el canal donde se ejecuta
+el comando. El comando no copia mensajes ni respuestas a los logs ni conserva
+historial. Envía a Gemini la instrucción de personalidad y el mensaje
 actual; no adjunta perfiles de Discord, archivos del proyecto ni conversaciones
 de otros usuarios. El mensaje sí es procesado por Google. Las instrucciones de
 comportamiento no garantizan que el modelo nunca se equivoque.

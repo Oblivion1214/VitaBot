@@ -4,6 +4,8 @@ const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const { ServicioMusica } = require('../utils/servicioMusica');
 const { obtenerCanalVoz, crearMensajeCola } = require('../utils/interfazMusica');
+const play = require('../commands/play');
+const { ErrorAudio } = require('../audio/protocolo');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const track = name => ({ title: name, url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', author: 'YouTube', durationSeconds: 19 });
 function fixture(options = {}) {
@@ -61,6 +63,43 @@ test('colas independientes por servidor y avance al terminar Opus', async t => {
     await tick(); assert.equal(a.current.track.title, 'a'); assert.equal(b.current.track.title, 'c');
     a.player.stop(); await tick(); assert.equal(a.current.track.title, 'b'); assert.equal(b.current.track.title, 'c');
     assert.equal(f.sources[0].closed, true); assert.equal(a.bitrate, 64);
+});
+test('permite 2 horas por pista y 6 horas pendientes y conserva la cola ante un exceso', async t => {
+    const f = fixture(); t.after(() => f.service.close());
+    const twoHours = { ...track('dos horas'), durationSeconds: 7200 };
+    assert.throws(() => f.service.enqueue(f.channel(), {}, [{ ...twoHours, durationSeconds: 7201 }], 'u'), /hasta 2 horas/);
+    assert.throws(() => f.service.enqueue(f.channel(), {}, Array(5).fill(twoHours), 'u'), /hasta 6 horas/);
+    assert.equal(f.service.get('guild'), undefined);
+    const session = f.service.enqueue(f.channel(), {}, Array(4).fill(twoHours), 'u');
+    assert.equal(session.current.track.durationSeconds, 7200);
+    assert.throws(() => f.service.enqueue(f.channel(), {}, [track('extra')], 'u'), /hasta 6 horas/);
+    assert.equal(session.tracks.length, 3);
+    await tick();
+    session.skip();
+    f.service.enqueue(f.channel(), {}, [{ ...track('sin duración'), durationSeconds: 0 }], 'u');
+    assert.throws(() => f.service.enqueue(f.channel(), {}, [track('extra')], 'u'), /hasta 6 horas/);
+    assert.equal(session.tracks.length, 3);
+});
+test('/play muestra la consulta original junto al error del servicio', async () => {
+    const query = 'https://youtu.be/IT8PYdoZMvE?si=oziJFc13uwFR84qJ';
+    const responses = [];
+    const f = fixture({ worker: { resolve: async received => {
+        assert.equal(received, query);
+        throw new ErrorAudio('La búsqueda tardó demasiado.', 504);
+    } } });
+    const interaction = {
+        member: { voice: { channel: f.channel() } }, guildId: 'guild', client: { music: f.service },
+        user: { displayName: 'Saul', displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png' },
+        options: { getString: () => query },
+        async deferReply() { this.deferred = true; },
+        async editReply(payload) { responses.push(payload); },
+    };
+    await play.execute(interaction);
+    const [response] = responses;
+    assert.equal(response.content, 'La búsqueda tardó demasiado.');
+    assert.equal(response.embeds[0].toJSON().description, query);
+    assert.equal(response.embeds[0].toJSON().author.name, 'Saul');
+    assert.deepEqual(response.allowedMentions.parse, []);
 });
 test('saltar durante la carga descarta el stream tardío y su evento Idle', async t => {
     let complete;

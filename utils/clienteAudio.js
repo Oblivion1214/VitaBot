@@ -1,6 +1,17 @@
 const { Readable } = require('node:stream');
 const { normalizarCancion, ErrorAudio } = require('../audio/protocolo');
 
+async function leerJson(response, maxBytes) {
+    let size = 0;
+    const chunks = [];
+    for await (const chunk of response.body) {
+        size += chunk.length;
+        if (size > maxBytes) throw new ErrorAudio('Respuesta de audio demasiado grande.');
+        chunks.push(Buffer.from(chunk));
+    }
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
 class ClienteAudio {
     constructor({ baseUrl = process.env.PC_AUDIO_URL, token = process.env.AUDIO_SHARED_TOKEN, fetchImpl = fetch } = {}) {
         if (!baseUrl || !token || token.length < 32) throw new Error('Configura PC_AUDIO_URL y AUDIO_SHARED_TOKEN para el servidor de audio.');
@@ -8,12 +19,13 @@ class ClienteAudio {
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('PC_AUDIO_URL inválida.');
         this.baseUrl = url.origin; this.token = token; this.fetch = fetchImpl;
     }
-    async request(route, { json, signal, stream = false, timeout = 30_000 } = {}) {
+    async request(route, { json, signal, stream = false, timeout = 35_000 } = {}) {
         const controller = new AbortController();
         const abort = () => controller.abort();
         if (signal?.aborted) abort();
         signal?.addEventListener('abort', abort, { once: true });
-        const timer = setTimeout(abort, timeout);
+        let timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; abort(); }, timeout);
         let transferred = false;
         try {
             const response = await this.fetch(new URL(route, this.baseUrl), {
@@ -22,19 +34,19 @@ class ClienteAudio {
                 body: json === undefined ? undefined : JSON.stringify(json),
             });
             if (!response.ok) {
-                await response.body?.cancel();
-                throw new ErrorAudio(response.status === 429 ? 'La PC está ocupada. Intenta de nuevo.' : 'El servidor de audio no está disponible.', response.status);
-            }
-            if (!stream) {
-                let size = 0;
-                const chunks = [];
-                for await (const chunk of response.body) {
-                    size += chunk.length;
-                    if (size > 512 * 1024) throw new ErrorAudio('Respuesta de audio demasiado grande.');
-                    chunks.push(Buffer.from(chunk));
+                const { status } = response;
+                if (status === 401) throw new ErrorAudio('El bot no pudo autenticarse con el servidor de audio.', status);
+                if (response.headers.get('content-type')?.startsWith('application/json')) {
+                    const details = await leerJson(response, 4096).catch(() => null);
+                    if (controller.signal.aborted) throw controller.signal.reason;
+                    if (typeof details?.error === 'string' && details.error.trim() && details.error.length <= 250) {
+                        throw new ErrorAudio(details.error, status);
+                    }
                 }
-                return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                throw new ErrorAudio(status === 429 ? 'El servidor de audio está ocupado. Intenta de nuevo.' :
+                    `El servidor de audio respondió con un error (HTTP ${status}).`, status);
             }
+            if (!stream) return await leerJson(response, 512 * 1024);
             if (!response.body || !response.headers.get('content-type')?.startsWith('audio/ogg')) { await response.body?.cancel(); throw new ErrorAudio('La PC no devolvió audio Opus.'); }
             const body = Readable.fromWeb(response.body, { highWaterMark: 64 * 1024 });
             const close = () => { signal?.removeEventListener('abort', abort); controller.abort(); body.destroy(); };
@@ -44,7 +56,9 @@ class ClienteAudio {
         } catch (error) {
             controller.abort();
             if (error instanceof ErrorAudio) throw error;
-            throw new ErrorAudio(signal?.aborted ? 'Solicitud cancelada.' : 'No pude comunicarme con la PC de audio.');
+            if (signal?.aborted) throw new ErrorAudio('Solicitud cancelada.', 499);
+            if (timedOut) throw new ErrorAudio('El servidor de audio tardó demasiado en responder.', 504);
+            throw new ErrorAudio('No pude comunicarme con el servidor de audio.');
         } finally {
             clearTimeout(timer);
             if (!transferred) signal?.removeEventListener('abort', abort);

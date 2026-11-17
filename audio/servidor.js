@@ -4,8 +4,10 @@ const path = require('node:path');
 const { timingSafeEqual } = require('node:crypto');
 const { Readable, Transform } = require('node:stream');
 const { obtenerHerramientasAudio, argumentosYtDlp } = require('../utils/herramientasAudio');
-const { ErrorAudio, interpretarConsulta, obtenerUrlVideo, normalizarCancion } = require('./protocolo');
-const { ejecutarJson, transmitirOpus } = require('./procesos');
+const { ErrorAudio, interpretarConsulta, obtenerUrlVideo, normalizarCancion, MAX_DURACION_PISTA } = require('./protocolo');
+const { ejecutarJsonLineas, transmitirOpus } = require('./procesos');
+
+const PLANTILLA_PISTA = '%(.{id,title,channel,uploader,duration,thumbnail,thumbnails.-1.url,webpage_url})j';
 
 async function leerCuerpo(request) {
     let size = 0;
@@ -46,7 +48,7 @@ async function spotifyQuery(url, fetchImpl, signal) {
 }
 
 function crearServidorAudio({ token, tools, cookiesPath, maxStreams = 3, maxResolvers = 2,
-    fetchImpl = fetch, resolveJson = ejecutarJson, startStream = transmitirOpus } = {}) {
+    fetchImpl = fetch, resolveJson = ejecutarJsonLineas, startStream = transmitirOpus } = {}) {
     if (typeof token !== 'string' || token.length < 32) throw new Error('Configura AUDIO_SHARED_TOKEN con al menos 32 caracteres.');
     const jobs = new Set();
     let resolving = 0;
@@ -64,17 +66,21 @@ function crearServidorAudio({ token, tools, cookiesPath, maxStreams = 3, maxReso
             if (request.method === 'POST' && url.pathname === '/v1/resolve') {
                 if (resolving >= maxResolvers) throw new ErrorAudio('La PC está resolviendo otras búsquedas. Intenta de nuevo.', 429);
                 resolving++;
-                const timer = setTimeout(() => controller.abort(), 30_000);
+                const deadline = AbortSignal.timeout(30_000);
+                const signal = AbortSignal.any([controller.signal, deadline]);
                 try {
                     const query = interpretarConsulta((await leerCuerpo(request)).query);
-                    const target = query.type === 'spotify' ? await spotifyQuery(query.value, fetchImpl, controller.signal) : query.value;
-                    const result = await resolveJson(tools.ytDlp, [...common(), '--dump-single-json', '--flat-playlist', '--playlist-end', '100', target], { signal: controller.signal });
-                    const entries = result.entries || [result];
+                    const target = query.type === 'spotify' ? await spotifyQuery(query.value, fetchImpl, signal) : query.value;
+                    const entries = await resolveJson(tools.ytDlp, [...common(), '--simulate', '--flat-playlist', '--playlist-end', '100',
+                        '--print', PLANTILLA_PISTA, target], { signal });
                     const tracks = entries.filter(Boolean).slice(0, 100).flatMap(entry => {
                         try { return [normalizarCancion(entry)]; } catch { return []; }
                     });
                     return sendJson(response, 200, { tracks, selection: query.type === 'search', playlist: query.type === 'playlist' });
-                } finally { clearTimeout(timer); resolving--; }
+                } catch (error) {
+                    if (deadline.aborted && !controller.signal.aborted) throw new ErrorAudio('La búsqueda tardó demasiado.', 504);
+                    throw error;
+                } finally { resolving--; }
             }
             if (!((request.method === 'GET' && url.pathname === '/v1/stream') || (request.method === 'POST' && url.pathname === '/v1/tts'))) {
                 return sendJson(response, 404, { error: 'Ruta no disponible.' });
@@ -109,7 +115,9 @@ function crearServidorAudio({ token, tools, cookiesPath, maxStreams = 3, maxReso
                     inputStream.once('close', () => upstream.destroy());
                     upstream.pipe(inputStream);
                 }
-                job.cancel = startStream({ response, tools, inputArgs, inputStream, bitrate, signal: controller.signal, onDone: () => jobs.delete(job) });
+                job.cancel = startStream({ response, tools, inputArgs, inputStream, bitrate,
+                    maxDurationSeconds: inputArgs ? MAX_DURACION_PISTA : undefined,
+                    signal: controller.signal, onDone: () => jobs.delete(job) });
                 transferred = true;
             } finally { if (!transferred) jobs.delete(job); }
         } catch (error) {
