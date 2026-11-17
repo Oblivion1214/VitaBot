@@ -1,5 +1,7 @@
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE = new Set(['youtube.com', 'www.youtube.com', 'music.youtube.com', 'm.youtube.com']);
+const MAX_DURACION_PISTA = 2 * 60 * 60;
+const MAX_DURACION_COLA = 6 * 60 * 60;
 
 class ErrorAudio extends Error {
     constructor(message, status = 502) { super(message); this.name = 'ErrorAudio'; this.status = status; }
@@ -36,7 +38,7 @@ function formatearDuracion(seconds) {
 function normalizarCancion(data) {
     const id = data.id;
     const url = VIDEO_ID.test(id || '') ? `https://www.youtube.com/watch?v=${id}` : obtenerUrlVideo(data.url || data.webpage_url || '');
-    const thumbnail = data.thumbnail || data.thumbnails?.at(-1)?.url || '';
+    const thumbnail = data.thumbnail || data['thumbnails.-1.url'] || data.thumbnails?.at(-1)?.url || '';
     return {
         url, title: String(data.title || 'Video sin título').slice(0, 200),
         author: String(data.channel || data.uploader || data.author || 'YouTube').slice(0, 100),
@@ -44,4 +46,5 @@ function normalizarCancion(data) {
         thumbnail: /^https:\/\//.test(thumbnail) ? thumbnail.slice(0, 1000) : '',
     };
 }
-module.exports = { ErrorAudio, interpretarConsulta, obtenerUrlVideo, normalizarCancion, formatearDuracion };
+module.exports = { ErrorAudio, interpretarConsulta, obtenerUrlVideo, normalizarCancion, formatearDuracion,
+    MAX_DURACION_PISTA, MAX_DURACION_COLA };

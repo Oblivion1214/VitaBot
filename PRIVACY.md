@@ -8,7 +8,8 @@ Image-generation prompts are no longer copied into audit logs. Other command int
 Discord audit messages remain until deleted by administrators or Discord.
 
 2. Chat and external services
-/chatconvita replies are posted in the channel and visible to people with access.
+/chatconvita posts the submitted message alongside Vita's reply in the channel,
+where both are visible to people with access.
 It sends the current message and character
 instructions to Google's Gemini API, without attaching Discord profiles, project
 files or other users' conversations. It does not retain chat history or copy chat

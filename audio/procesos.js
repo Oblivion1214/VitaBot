@@ -1,7 +1,7 @@
 const { spawn } = require('node:child_process');
 const { ErrorAudio } = require('./protocolo');
 
-function ejecutarJson(binary, args, { signal, timeout = 30_000, spawnImpl = spawn } = {}) {
+function ejecutarJsonLineas(binary, args, { signal, timeout = 30_000, spawnImpl = spawn } = {}) {
     return new Promise((resolve, reject) => {
         if (signal?.aborted) return reject(new ErrorAudio('Solicitud cancelada.', 499));
         const proc = spawnImpl(binary, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -25,12 +25,16 @@ function ejecutarJson(binary, args, { signal, timeout = 30_000, spawnImpl = spaw
         proc.once('error', () => finish(new ErrorAudio('No se pudo iniciar el extractor.')));
         proc.once('close', code => {
             if (code !== 0) return finish(new ErrorAudio('YouTube no permitió resolver esta búsqueda.'));
-            try { finish(null, JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { finish(new ErrorAudio('El extractor devolvió una respuesta inválida.')); }
+            try {
+                const output = Buffer.concat(chunks).toString('utf8').trim();
+                finish(null, output ? output.split(/\r?\n/).map(line => JSON.parse(line)) : []);
+            } catch { finish(new ErrorAudio('El extractor devolvió una respuesta inválida.')); }
         });
     });
 }
 
-function transmitirOpus({ response, tools, inputArgs, bitrate, signal, inputStream, spawnImpl = spawn, onDone = () => {} }) {
+function transmitirOpus({ response, tools, inputArgs, bitrate, signal, inputStream, maxDurationSeconds,
+    spawnImpl = spawn, onDone = () => {} }) {
     let ended = false, started = false;
     let downloader, encoder;
     const cleanup = () => {
@@ -57,6 +61,7 @@ function transmitirOpus({ response, tools, inputArgs, bitrate, signal, inputStre
     if (signal?.aborted) { cancel(); return cleanup; }
     try {
         encoder = spawnImpl(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vn',
+            ...(maxDurationSeconds ? ['-t', String(maxDurationSeconds)] : []),
             '-c:a', 'libopus', '-b:a', `${bitrate}k`, '-ar', '48000', '-ac', '2',
             '-compression_level', '5', '-frame_duration', '20', '-f', 'opus', 'pipe:1'],
         { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -81,4 +86,4 @@ function transmitirOpus({ response, tools, inputArgs, bitrate, signal, inputStre
     } catch { fail(); }
     return cleanup;
 }
-module.exports = { ejecutarJson, transmitirOpus };
+module.exports = { ejecutarJsonLineas, transmitirOpus };

@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { gemini } = require('../utils/servicioGemini');
+const { crearSolicitud } = require('../utils/interfazSolicitudes');
 const { esSolicitudTecnica, esRespuestaTecnica, RESPUESTA_TEMA_TECNICO, RESPUESTA_TEMA_NO_PERMITIDO } = require('../utils/charlaVita');
 
 const usoGlobal = new Map();
@@ -30,7 +31,8 @@ module.exports = {
             .setMaxLength(1000)),
 
     async execute(interaction) {
-        const promptUsuario = interaction.options.getString('mensaje').trim();
+        const mensaje = interaction.options.getString('mensaje', true);
+        const promptUsuario = mensaje.trim();
         if (!promptUsuario || promptUsuario.length > 1000) {
             return interaction.reply({
                 content: '¡Oye! Escríbeme un mensaje de entre 1 y 1000 caracteres.',
@@ -38,18 +40,20 @@ module.exports = {
             });
         }
 
+        const solicitud = { embeds: [crearSolicitud(interaction, '💬 Mensaje para Vita', mensaje)], allowedMentions: { parse: [] } };
         if (esSolicitudTecnica(promptUsuario)) {
-            return interaction.reply({ content: limitarRespuesta(RESPUESTA_TEMA_TECNICO), allowedMentions: { parse: [] } });
+            return interaction.reply({ ...solicitud, content: limitarRespuesta(RESPUESTA_TEMA_TECNICO) });
         }
 
         if (!gemini.configured()) {
-            return interaction.reply({ content: RESPUESTA_NO_DISPONIBLE, flags: MessageFlags.Ephemeral });
+            return interaction.reply({ ...solicitud, content: RESPUESTA_NO_DISPONIBLE, flags: MessageFlags.Ephemeral });
         }
 
         const scope = interaction.guildId ?? `dm:${interaction.user.id}`;
         const ahora = Date.now();
         if (solicitudesEnCurso.has(scope) || ahora - (usoGlobal.get(scope) ?? 0) < COOLDOWN_MS) {
             return interaction.reply({
+                ...solicitud,
                 content: '¡No me presiones! Dame un momento para terminar lo que estoy haciendo.',
                 flags: MessageFlags.Ephemeral,
             });
@@ -67,11 +71,11 @@ module.exports = {
 
             // No se guardan mensajes, respuestas ni identificadores del usuario en los logs de chat.
             return await interaction.editReply({
+                ...solicitud,
                 content: respuesta ? limitarRespuesta(respuesta) : RESPUESTA_NO_DISPONIBLE,
-                allowedMentions: { parse: [] },
             });
         } catch {
-            return interaction.editReply({ content: RESPUESTA_NO_DISPONIBLE, allowedMentions: { parse: [] } });
+            return interaction.editReply({ ...solicitud, content: RESPUESTA_NO_DISPONIBLE });
         } finally {
             solicitudesEnCurso.delete(scope);
         }

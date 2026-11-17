@@ -5,12 +5,12 @@ const { PassThrough } = require('node:stream');
 const { crearServidorAudio } = require('../audio/servidor');
 const { interpretarConsulta } = require('../audio/protocolo');
 const { ClienteAudio } = require('../utils/clienteAudio');
-const { ejecutarJson, transmitirOpus } = require('../audio/procesos');
+const { ejecutarJsonLineas, transmitirOpus } = require('../audio/procesos');
 const token = 'x'.repeat(64);
 const tools = { ytDlp: 'fake-extractor', ffmpeg: 'fake-encoder', node: process.execPath };
 const video = 'https://www.youtube.com/watch?v=jNQXAC9IVRw';
 async function fixture(t, options = {}) {
-    const server = crearServidorAudio({ token, tools, resolveJson: async () => ({ id: 'jNQXAC9IVRw', title: 'Clip', duration: 19 }), ...options });
+    const server = crearServidorAudio({ token, tools, resolveJson: async () => [{ id: 'jNQXAC9IVRw', title: 'Clip', duration: 19 }], ...options });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     t.after(() => { server.closeJobs(); server.closeAllConnections(); server.close(); });
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -32,10 +32,17 @@ test('health y streaming requieren autenticación, sin revelar configuración', 
 });
 test('búsqueda normalizada y límites enviados a yt-dlp sin shell ni datos de Discord', async t => {
     let args;
-    const f = await fixture(t, { resolveJson: async (_, value) => { args = value; return { entries: [{ id: 'jNQXAC9IVRw', title: 'Clip' }, { url: 'http://127.0.0.1' }] }; } });
+    const f = await fixture(t, { resolveJson: async (_, value) => {
+        args = value;
+        return [{ id: 'jNQXAC9IVRw', title: 'Clip', duration: 19, 'thumbnails.-1.url': 'https://i.ytimg.com/clip.jpg' }, { url: 'http://127.0.0.1' }];
+    } });
     const result = await f.client.resolve('algo');
     assert.equal(result.selection, true); assert.equal(result.tracks.length, 1); assert.equal(result.tracks[0].url, video);
+    assert.equal(result.tracks[0].durationSeconds, 19);
+    assert.equal(result.tracks[0].thumbnail, 'https://i.ytimg.com/clip.jpg');
     assert.ok(args.includes('--no-cookies')); assert.ok(args.includes('--ignore-config')); assert.ok(args.includes('--playlist-end'));
+    assert.match(args[args.indexOf('--print') + 1], /id,title,channel,uploader,duration/);
+    assert.ok(!args.includes('--dump-single-json'));
     assert.equal(args.at(-1), 'ytsearch5:algo');
 });
 test('rechaza JSON inválido, cuerpos grandes y enlaces internos antes de extraer', async t => {
@@ -59,16 +66,27 @@ test('limita búsquedas simultáneas y libera el cupo al cancelar la solicitud',
 });
 test('limita streams y libera procesos al cerrar el consumidor', async t => {
     let closed = 0;
-    const f = await fixture(t, { maxStreams: 1, startStream: ({ response, signal, onDone }) => {
+    const f = await fixture(t, { maxStreams: 1, startStream: ({ response, signal, onDone, maxDurationSeconds }) => {
+        assert.equal(maxDurationSeconds, 7200);
         response.writeHead(200, { 'Content-Type': 'audio/ogg' }); response.write(Buffer.from('OggS'));
         const cancel = () => { closed++; onDone(); }; signal.addEventListener('abort', cancel, { once: true }); return cancel;
     } });
     const stream = await f.client.open({ url: video }, 64);
     assert.equal((await f.client.health()).activeStreams, 1);
-    await assert.rejects(f.client.open({ url: video }, 64), /ocupada/);
+    await assert.rejects(f.client.open({ url: video }, 64), { status: 429, message: /límite de audio simultáneo/ });
     stream.stream.on('error', () => {}); stream.close();
     for (let i = 0; i < 30 && (await f.client.health()).activeStreams; i++) await new Promise(resolve => setTimeout(resolve, 5));
     assert.equal((await f.client.health()).activeStreams, 0); assert.equal(closed, 1);
+});
+test('el cliente distingue los errores del servicio y las respuestas sin detalles', async t => {
+    const f = await fixture(t);
+    await assert.rejects(f.client.resolve('https://example.com/video'), {
+        status: 400, message: 'Usa enlaces de YouTube o una canción de Spotify.',
+    });
+    const unauthenticated = new ClienteAudio({ baseUrl: f.baseUrl, token: 'y'.repeat(64) });
+    await assert.rejects(unauthenticated.health(), { status: 401, message: /autenticarse/ });
+    const proxy = new ClienteAudio({ baseUrl: f.baseUrl, token, fetchImpl: async () => new Response('HTML', { status: 503 }) });
+    await assert.rejects(proxy.health(), { status: 503, message: /HTTP 503/ });
 });
 test('cliente rechaza redirecciones, JSON enorme y respuesta que no sea Opus', async () => {
     const client = new ClienteAudio({ baseUrl: 'http://pc:3001', token, fetchImpl: async (_, options) => {
@@ -81,8 +99,16 @@ test('cliente rechaza redirecciones, JSON enorme y respuesta que no sea Opus', a
 test('cancelar la extracción mata al proceso sin filtrar stderr', async () => {
     const abort = new AbortController(); let killed = false;
     const proc = new EventEmitter(); proc.stdout = new PassThrough(); proc.stderr = new PassThrough(); proc.kill = () => { killed = true; };
-    const pending = ejecutarJson('fake', [], { signal: abort.signal, spawnImpl: () => proc }); abort.abort();
+    const pending = ejecutarJsonLineas('fake', [], { signal: abort.signal, spawnImpl: () => proc }); abort.abort();
     await assert.rejects(pending, /cancelada/); assert.equal(killed, true);
+});
+test('lee las entradas JSON de una lista aunque se dividan entre bloques', async () => {
+    const proc = new EventEmitter(); proc.stdout = new PassThrough(); proc.stderr = new PassThrough();
+    const pending = ejecutarJsonLineas('fake', [], { spawnImpl: () => proc });
+    proc.stdout.write(Buffer.from('{"title":"A"}\r\n{"tit'));
+    proc.stdout.end(Buffer.from('le":"B"}\n'));
+    proc.emit('close', 0);
+    assert.deepEqual(await pending, [{ title: 'A' }, { title: 'B' }]);
 });
 test('fallo al iniciar FFmpeg devuelve 502 y libera el trabajo', async () => {
     const response = new PassThrough(); response.writeHead = status => { response.status = status; response.headersSent = true; };
@@ -94,11 +120,12 @@ test('datos tardíos de FFmpeg después de cancelar no reabren ni escriben la re
     const abort = new AbortController(), response = new PassThrough(), processes = [];
     let headers = 0, done = 0;
     response.writeHead = () => { headers++; };
-    const spawnImpl = () => {
+    const spawnImpl = (binary, args) => {
+        if (binary === tools.ffmpeg) assert.deepEqual(args.slice(args.indexOf('-t'), args.indexOf('-t') + 2), ['-t', '7200']);
         const proc = new EventEmitter(); proc.stdin = new PassThrough(); proc.stdout = new PassThrough(); proc.stderr = new PassThrough();
         proc.killed = false; proc.kill = () => { proc.killed = true; }; processes.push(proc); return proc;
     };
-    transmitirOpus({ response, tools, inputArgs: [], bitrate: 64, signal: abort.signal, onDone: () => done++, spawnImpl });
+    transmitirOpus({ response, tools, inputArgs: [], bitrate: 64, signal: abort.signal, maxDurationSeconds: 7200, onDone: () => done++, spawnImpl });
     abort.abort(); processes[0].stdout.write(Buffer.from('late')); processes[0].stdout.end();
     assert.equal(headers, 0); assert.equal(done, 1); assert.ok(processes.every(proc => proc.killed));
 });

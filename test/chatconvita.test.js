@@ -26,6 +26,7 @@ function cargarComando(generar = async () => normalResponse('Vamos a resolverlo.
             if (name === 'discord.js') return discord;
             if (name === '../config/personalidadVita') return { INSTRUCCIONES_SISTEMA_VITA };
             if (name === '../utils/charlaVita') return require('../utils/charlaVita');
+            if (name === '../utils/interfazSolicitudes') return require('../utils/interfazSolicitudes');
             if (name === '../utils/servicioGemini') return { gemini: require('../utils/servicioGemini').crearServicioGemini({
                 env: sandbox.process.env, now: () => now, policy: { run: (_scope, work) => work() },
                 registrar: datos => avisos.push(JSON.stringify(datos)),
@@ -50,7 +51,7 @@ function cargarComando(generar = async () => normalResponse('Vamos a resolverlo.
 function interaccion(mensaje = 'Vita, ¿qué harías en un día libre?', guildId = 'servidor-a', userId = 'usuario-a') {
     const respuestas = [];
     return {
-        guildId, user: { id: userId }, respuestas,
+        guildId, user: { id: userId, displayName: 'Usuario de prueba', displayAvatarURL: () => 'https://cdn.discordapp.com/embed/avatars/0.png' }, respuestas,
         options: { getString: () => mensaje },
         async reply(payload) { respuestas.push({ tipo: 'reply', ...payload }); },
         async deferReply(payload) { respuestas.push({ tipo: 'defer', ...payload }); },
@@ -58,20 +59,22 @@ function interaccion(mensaje = 'Vita, ¿qué harías en un día libre?', guildId
     };
 }
 
-test('responde en el canal y solo envía al proveedor el mensaje actual y la personalidad', async () => {
+test('muestra el mensaje junto a la respuesta y solo envía al proveedor el mensaje actual y la personalidad', async () => {
     const { command, peticiones } = cargarComando(async () => normalResponse('Claro. @everyone'));
-    const i = interaccion('Texto privado de prueba');
+    const i = interaccion('Texto de prueba **literal**');
     await command.execute(i);
     assert.equal(i.respuestas[0].tipo, 'defer');
     assert.equal((i.respuestas[0].flags ?? 0) & discord.MessageFlags.Ephemeral, 0);
     assert.equal(peticiones.length, 1);
-    assert.equal(peticiones[0].mensaje, 'Texto privado de prueba');
+    assert.equal(peticiones[0].mensaje, 'Texto de prueba **literal**');
     assert.equal(peticiones[0].config.systemInstruction, INSTRUCCIONES_SISTEMA_VITA);
     assert.equal(peticiones[0].opciones.timeout, 15_000);
     const salida = i.respuestas.at(-1);
     assert.equal(salida.content, '**Vita:** Claro. @everyone');
     assert.equal(salida.allowedMentions.parse.length, 0);
-    assert.ok(!salida.content.includes('Texto privado de prueba'));
+    const solicitud = salida.embeds[0].toJSON();
+    assert.equal(solicitud.description, 'Texto de prueba \\*\\*literal\\*\\*');
+    assert.equal(solicitud.author.name, 'Usuario de prueba');
 });
 
 test('limita la salida completa a 2000 caracteres incluso con una entrada larga y emojis', async () => {

@@ -1,7 +1,7 @@
 const { EventEmitter } = require('node:events');
 const defaultVoice = require('@discordjs/voice');
 const { ClienteAudio } = require('./clienteAudio');
-const { ErrorAudio } = require('../audio/protocolo');
+const { ErrorAudio, MAX_DURACION_PISTA, MAX_DURACION_COLA } = require('../audio/protocolo');
 
 class ServicioMusica extends EventEmitter {
     constructor(client, { voice = defaultVoice, worker, idleMs = 120_000,
@@ -28,6 +28,18 @@ class ServicioMusica extends EventEmitter {
     }
     enqueue(channel, textChannel, tracks, requestedBy) {
         if (!Array.isArray(tracks) || !tracks.length || tracks.length > 200) throw new ErrorAudio('La solicitud debe contener entre 1 y 200 canciones.', 400);
+        if (tracks.some(track => track.durationSeconds > MAX_DURACION_PISTA)) {
+            throw new ErrorAudio('Cada audio o video puede durar hasta 2 horas.', 400);
+        }
+        const existing = this.get(channel.guild.id);
+        const pending = [...(existing?.tracks || []), ...tracks].slice(existing?.current ? 0 : 1);
+        if (pending.length > 200) throw new ErrorAudio('La cola admite hasta 200 canciones pendientes.', 400);
+        // Una pista sin duración conocida puede ocupar hasta el límite del codificador.
+        const pendingSeconds = pending.reduce((total, { durationSeconds }) => total +
+            (Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : MAX_DURACION_PISTA), 0);
+        if (pendingSeconds > MAX_DURACION_COLA) {
+            throw new ErrorAudio('La cola admite hasta 6 horas de audio pendiente.', 400);
+        }
         const session = this.reserve(channel, textChannel);
         session.enqueue(tracks, requestedBy);
         return session;
@@ -71,8 +83,6 @@ class SesionServidor {
     enqueue(tracks, requestedBy) {
         if (this.closed) throw new ErrorAudio('La sesión ya terminó. Vuelve a usar /play.', 409);
         if (this.current?.kind === 'tts') throw new ErrorAudio('Espera a que termine de hablar.', 409);
-        if (!tracks.length) throw new ErrorAudio('No encontré canciones disponibles.', 404);
-        if (this.tracks.length + tracks.length > 200) throw new ErrorAudio('La cola admite hasta 200 canciones pendientes.', 400);
         this.tracks.push(...tracks.map(track => ({ ...track, requestedBy })));
         clearTimeout(this.idleTimer);
         this.next();
@@ -92,7 +102,7 @@ class SesionServidor {
         owner.generation = ++this.generation;
         this.current = owner;
         // Every asynchronous result belongs to this owner; skipped work cannot replace a newer resource.
-        this.load(owner).catch(() => this.finish(owner, new ErrorAudio('No pude iniciar el audio. Comprueba que el servidor de audio esté disponible.')));
+        this.load(owner).catch(error => this.finish(owner, error instanceof ErrorAudio ? error : new ErrorAudio('No pude iniciar el audio.')));
     }
     async connect() {
         if (this.ready) return this.ready;
